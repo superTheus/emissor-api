@@ -1,0 +1,20 @@
+{
+    "name": "joaom/emissor-api",
+    "description": "API de emissão de Notas Fiscais",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "App\\": "app/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Matheus Souza",
+            "email": "joaomtfslp123@gmail.com"
+        }
+    ],
+    "require": {
+        "bramus/router": "^1.6",
+        "nfephp-org/sped-nfe": "^5.1"
+    }
+}
