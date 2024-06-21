@@ -194,6 +194,10 @@ class CompanyModel extends Connection
               bairro = :bairro,
               cidade = :cidade,
               uf = :uf,
+              cnae = :cnae,
+              inscricao_estadual = :inscricao_estadual,
+              inscricao_municipal = :inscricao_municipal,
+              atividade = :atividade,
               certificado = :certificado,
               senha = :senha,
               csc = :csc,
@@ -217,6 +221,10 @@ class CompanyModel extends Connection
       $stmt->bindParam(':bairro', $this->bairro);
       $stmt->bindParam(':cidade', $this->cidade);
       $stmt->bindParam(':uf', $this->uf);
+      $stmt->bindParam(':cnae', $this->cnae);
+      $stmt->bindParam(':inscricao_estadual', $this->inscricao_estadual);
+      $stmt->bindParam(':inscricao_municipal', $this->inscricao_municipal);
+      $stmt->bindParam(':atividade', $this->atividade);
       $stmt->bindParam(':certificado', $this->certificado);
       $stmt->bindParam(':senha', $this->senha);
       $stmt->bindParam(':csc', $this->csc);
@@ -246,15 +254,77 @@ class CompanyModel extends Connection
 
   public function getCertificate()
   {
-    $certificadoBase64 = $this->getCertificado();
+    $folderPath = "app/storage/certificados";
+    $certificadoPath = $folderPath . "/" . $this->getCertificado();
 
-    $certificado = base64_decode($certificadoBase64);
-    $certInfo = openssl_pkcs12_read($certificado, $certs, $this->senha);
+    if (file_exists($certificadoPath)) {
+      $certificado = file_get_contents($certificadoPath);
+      $certInfo = openssl_pkcs12_read($certificado, $certs, $this->getSenha());
 
-    if ($certInfo) {
-      return openssl_x509_parse($certs['cert']);
+      if ($certInfo) {
+        return openssl_x509_parse($certs['cert']);
+      } else {
+        return null;
+      }
     } else {
       return null;
+    }
+  }
+
+  public function uploadCertificado($certificado)
+  {
+    $certificado = base64_decode($certificado);
+
+    $folderPath = "app/storage/certificados";
+    $fileName = "certificado_" . uniqid() . ".pfx";
+
+    if (!file_exists($folderPath)) {
+      mkdir($folderPath, 0777, true);
+    }
+
+    file_put_contents($folderPath . "/" . $fileName, $certificado);
+
+    return $fileName;
+  }
+
+  public function validateCertificate($cnpj, $senha, $certificadoNome)
+  {
+    $folderPath = "app/storage/certificados";
+    $certificadoPath = $folderPath . "/" . $certificadoNome;
+
+    if (file_exists($certificadoPath)) {
+      $certificado = file_get_contents($certificadoPath);
+      $certInfo = openssl_pkcs12_read($certificado, $certs, $senha);
+
+      if ($certInfo) {
+        $data = openssl_x509_parse($certs['cert']);
+        $data = json_encode($data);
+        $data = json_decode($data);
+
+        list($nome, $documento) = explode(":", $data->subject->CN);
+
+        $dt_vencimento = date('Y-m-d', $data->validTo_time_t);
+        $dt_atual = date('Y-m-d');
+
+        if ($documento == $cnpj) {
+          if ($dt_atual <= $dt_vencimento) {
+            return false;
+          } else {
+            return "Certificado vencido";
+          }
+        } else {
+          return "CNPJ do certificado é diferente do CNPJ informado";
+        }
+      } else {
+        $error = '';
+
+        while ($msg = openssl_error_string()) {
+          $error .= $msg . "\n";
+        }
+        return $error;
+      }
+    } else {
+      return "Certificado não encontrado";
     }
   }
 

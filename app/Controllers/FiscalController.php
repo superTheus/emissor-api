@@ -19,6 +19,7 @@ class FiscalController extends Connection
   private $ambiente = 2;
   private $company;
   private $recibo;
+  private $certificado;
 
   public function __construct($cnpj = null)
   {
@@ -31,68 +32,73 @@ class FiscalController extends Connection
       ]);
 
       $this->company = new CompanyModel($company[0]['id']);
-      $this->company->getCertificado();
+      $this->certificado = $this->getCertifcado();
       $this->config = $this->setConfig();
     }
   }
 
   public function createNfe()
   {
-    $std = new stdClass();
-    $std->versao = '4.00';
-    $this->nfe->taginfNFe($std);
-    $this->nfe->tagide($this->generateDataSale([]));
-    $this->nfe->tagemit($this->generateDataCompany([]));
-    $this->nfe->tagenderEmit($this->generateDataAddress([]));
-    $this->nfe->tagdest($this->generateClientData([]));
-    $this->nfe->tagenderDest($this->generateClientAddressData([]));
-    $this->nfe->tagprod($this->generateProductData());
-    $this->nfe->tagimposto($this->generateImpostoData());
-    $this->nfe->tagICMS($this->generateIcmsData());
-    $this->nfe->tagIPI($this->generateIpiData());
-    $this->nfe->tagPIS($this->generatePisData());
-    $this->nfe->tagCOFINSST($this->generateCofinsData());
-    $this->nfe->tagICMSTot($this->generateIcmsTot());
-    $this->nfe->tagtransp($this->generateFreteData());
-    $this->nfe->tagvol($this->generateVolume());
-    $this->nfe->tagpag($this->generateFaturaData());
-    $this->nfe->tagdup($this->generateDuplicataData());
-    $this->nfe->tagdetPag($this->generatePagamentoData());
+    try {
+      $std = new stdClass();
+      $std->versao = '4.00';
+      $this->nfe->taginfNFe($std);
+      $this->nfe->tagide($this->generateDataSale([]));
+      $this->nfe->tagemit($this->generateDataCompany());
+      $this->nfe->tagenderEmit($this->generateDataAddress([]));
+      $this->nfe->tagdest($this->generateClientData([]));
+      $this->nfe->tagenderDest($this->generateClientAddressData([]));
+      $this->nfe->tagprod($this->generateProductData());
+      $this->nfe->tagimposto($this->generateImpostoData());
+      $this->nfe->tagICMS($this->generateIcmsData());
+      $this->nfe->tagIPI($this->generateIpiData());
+      $this->nfe->tagPIS($this->generatePisData());
+      $this->nfe->tagCOFINS($this->generateCofinsData());
+      $this->nfe->tagICMSTot($this->generateIcmsTot());
+      $this->nfe->tagtransp($this->generateFreteData());
+      $this->nfe->tagvol($this->generateVolume());
+      $this->nfe->tagpag($this->generateFaturaData());
+      $this->nfe->tagdup($this->generateDuplicataData());
+      $this->nfe->tagdetPag($this->generatePagamentoData());
+      $this->nfe->taginfRespTec($this->generateReponsavelTecnicp());
 
-    $this->currentXML = $this->nfe->getXML();
+      $this->currentXML = $this->nfe->getXML();
 
-    $certificado = $this->getCertifcado();
-    $tools = new Tools(json_encode($this->config), Certificate::readPfx($certificado, $this->company->getSenha()));
-    $xmlAssinado = $tools->signNFe($this->currentXML);
+      $tools = new Tools(json_encode($this->config), Certificate::readPfx($this->certificado, $this->company->getSenha()));
+      $xmlAssinado = $tools->signNFe($this->currentXML);
 
-    $idLote = str_pad(100, 15, '0', STR_PAD_LEFT); // Identificador do lote
-    $resp = $tools->sefazEnviaLote([$xmlAssinado], $idLote);
+      $idLote = str_pad(100, 15, '0', STR_PAD_LEFT); // Identificador do lote
+      $resp = $tools->sefazEnviaLote([$xmlAssinado], $idLote);
 
-    $st = new Standardize();
-    $std = $st->toStd($resp);
-    if ($std->cStat != 103) {
+      $st = new Standardize();
+      $std = $st->toStd($resp);
+      if ($std->cStat != 103) {
+        http_response_code(500);
+        echo json_encode(['error' => "[$std->cStat] $std->xMotivo"]);
+        return;
+      }
+
+      $this->recibo = $std->infRec->nRec;
+      $protocolo = $tools->sefazConsultaRecibo($this->recibo);
+
+      $protocol = new Complements();
+      $xmlProtocolado = $protocol->toAuthorize($xmlAssinado, $protocolo);
+
+      var_dump($xmlProtocolado);
+    } catch (\Exception $e) {
       http_response_code(500);
-      echo json_encode(['error' => "[$std->cStat] $std->xMotivo"]);
-      return;
+      echo json_encode(['error' => $e->getMessage(), "error_tags" => $this->nfe->getErrors()]);
     }
-
-    $this->recibo = $std->infRec->nRec;
-    $protocolo = $tools->sefazConsultaRecibo($this->recibo);
-
-    $protocol = new Complements();
-    $xmlProtocolado = $protocol->toAuthorize($xmlAssinado, $protocolo);
-
-    var_dump($xmlProtocolado);
   }
 
   private function setConfig()
   {
     $config = [
-      "atualizacao" => "2024-06-19 06:01:21",
-      "tpAmb" => $this->ambiente, // 1-Produção / 2-Homologação
+      "atualizacao" => date('Y-m-d H:i:s'),
+      "tpAmb"       => $this->ambiente, // 1-Produção / 2-Homologação
       "razaosocial" => $this->company->getRazao_social(),
-      "siglaUF" => $this->company->getUf(),
-      "cnpj" => $this->company->getCnpj(),
+      "siglaUF"     => $this->company->getUf(),
+      "cnpj"        => $this->company->getCnpj(),
       "schemes"     => "PL_009_V4",
       "versao"      => '4.00',
       "tokenIBPT"   => "AAAAAAA",
@@ -112,7 +118,7 @@ class FiscalController extends Connection
   private function generateDataSale($data)
   {
     $std = new stdClass();
-    $std->cUF = 35;
+    $std->cUF = 13;
     $std->cNF = '80070008';
     $std->natOp = 'VENDA';
     $std->indPag = 0;
@@ -123,7 +129,7 @@ class FiscalController extends Connection
     $std->dhSaiEnt = '2024-06-19T20:48:00-02:00';
     $std->tpNF = 1;
     $std->idDest = 1;
-    $std->cMunFG = 3518800;
+    $std->cMunFG = '1302603';
     $std->tpImp = 1;
     $std->tpEmis = 1;
     $std->cDV = 2;
@@ -137,13 +143,13 @@ class FiscalController extends Connection
     return $std;
   }
 
-  private function generateDataCompany($data)
+  private function generateDataCompany()
   {
     $std = new stdClass();
-    $std->xNome = 'Empresa teste';
-    $std->IE = '6564344535';
+    $std->xNome = $this->company->getRazao_social();
+    $std->IE = $this->company->getInscricao_estadual();
     $std->CRT = 3;
-    $std->CNPJ = '78767865000156';
+    $std->CNPJ = $this->company->getCnpj();
 
     return $std;
   }
@@ -154,7 +160,7 @@ class FiscalController extends Connection
     $std->xLgr = $this->company->getLogradouro();
     $std->nro = $this->company->getNumero();
     $std->xBairro = $this->company->getBairro();
-    $std->cMun = '4317608';
+    $std->cMun = '1302603';
     $std->xMun = $this->company->getCidade();
     $std->UF = $this->company->getUf();
     $std->CEP = $this->company->getCep();
@@ -180,10 +186,10 @@ class FiscalController extends Connection
     $std = new stdClass();
     $std->xLgr = "Rua Teste";
     $std->nro = '203';
-    $std->xBairro = 'Centro';
-    $std->cMun = '4317608';
-    $std->xMun = 'Porto Alegre';
-    $std->UF = 'RS';
+    $std->xBairro = 'Compensa';
+    $std->cMun = '1302603';
+    $std->xMun = 'Manaus';
+    $std->UF = 'AM';
     $std->CEP = 69035115;
     $std->cPais = '1058';
     $std->xPais = 'BRASIL';
@@ -196,17 +202,19 @@ class FiscalController extends Connection
     $std = new stdClass();
     $std->item = 1;
     $std->cProd = '0001';
-    $std->xProd = "Produto teste";
-    $std->NCM = '66554433';
+    $std->xProd = "Coca Cola 1L";
+    $std->NCM = '22021000';
     $std->CFOP = '5102';
-    $std->uCom = 'PÇ';
+    $std->uCom = 'UN';
     $std->qCom = '1.0000';
     $std->vUnCom = '10.99';
     $std->vProd = '10.99';
-    $std->uTrib = 'PÇ';
+    $std->uTrib = 'UN';
     $std->qTrib = '1.0000';
     $std->vUnTrib = '10.99';
     $std->indTot = 1;
+    $std->cEAN = 'SEM GTIN';
+    $std->cEANTrib  = 'SEM GTIN';
 
     return $std;
   }
@@ -288,7 +296,7 @@ class FiscalController extends Connection
     $std->vPIS = 0.00;
     $std->vCOFINS = 0.00;
     $std->vOutro = 0.00;
-    $std->vNF = 11.03;
+    $std->vNF = 10.99;
     $std->vTotTrib = 0.00;
 
     return $std;
@@ -345,9 +353,23 @@ class FiscalController extends Connection
     return $std;
   }
 
+  public function generateReponsavelTecnicp()
+  {
+    $std = new stdClass();
+    $std->CNPJ      = "45730598000102";
+    $std->xContato  = "Logic Tecnologia e Inovação";
+    $std->email     = "contato.logictec@gmail.com";
+    $std->fone      = "92991225648";
+    $std->idCSRT    = "01";
+
+    return $std;
+  }
+
   private function getCertifcado()
   {
-    return base64_decode($this->company->getCertificado());
+    $folderPath = "app/storage/certificados";
+    $certificadoPath = $folderPath . "/" . $this->company->getCertificado();
+    return file_get_contents($certificadoPath);
   }
 
   public function testCertificate($cnpj)
@@ -359,22 +381,11 @@ class FiscalController extends Connection
 
     if ($company) {
       $company = new CompanyModel($company[0]['id']);
-      $company->getCertificado();
-      $certificadoBase64 = $company->getCertificado();
 
-      $certificado = base64_decode($certificadoBase64);
+      $folderPath = "app/storage/certificados";
+      $certificadoPath = $folderPath . "/" . $company->getCertificado();
 
-      $folderPath = "../storage/certificados/";
-      $fileName = "certificado_" . uniqid() . ".pfx";
-
-      if (!file_exists($folderPath)) {
-        mkdir($folderPath, 0777, true);
-      }
-
-      // Salva o certificado decodificado no arquivo .pfx
-      file_put_contents($folderPath . "/" . $fileName, $certificado);
-
-      $certInfo = openssl_pkcs12_read(file_get_contents($folderPath . "/" . $fileName), $certs, $company->getSenha());
+      $certInfo = openssl_pkcs12_read(file_get_contents($certificadoPath), $certs, $company->getSenha());
 
       if ($certInfo) {
         $data = openssl_x509_parse($certs['cert']);

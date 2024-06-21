@@ -3,7 +3,9 @@
 namespace App\Routers;
 
 use App\Controllers\CompanyController;
+use App\Controllers\CupomFiscalController;
 use App\Controllers\FiscalController;
+use App\Controllers\UtilsController;
 use Bramus\Router\Router;
 
 class Routers
@@ -68,14 +70,19 @@ class Routers
         $fiscalController->createNfe();
       });
 
+      $router->post('/nfce', function () {
+        $data = json_decode(file_get_contents('php://input'), true);
+        $cupomfiscalController = new CupomFiscalController($data['cnpj']);
+        $cupomfiscalController->createNfe();
+      });
+
       $router->mount('/certicate', function () use ($router) {
         $router->get('/', function () {
           echo 'Certificado';
         });
 
         $router->get('/test/{cnpj}', function ($cnpj) {
-          $fiscalController = new FiscalController();
-          $fiscalController->testCertificate($cnpj);
+          UtilsController::testCertificate($cnpj);
         });
       });
     });

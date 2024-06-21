@@ -38,14 +38,32 @@ class CompanyController
 
   public function create($data)
   {
-    $result = $this->companyModel->create($data);
+    if (isset($data['certificado'])) {
+      if (base64_decode($data['certificado'], true) === false) {
+        http_response_code(400); // Not Found
+        echo json_encode(['error' => 'Certificado precisa ser uma string base64 válida']);
+      } else {
+        $data['certificado'] = $this->companyModel->uploadCertificado($data['certificado']);
 
-    if ($result) {
-      http_response_code(200); // OK
-      echo json_encode(array($result));
+        $isInvalid = $this->companyModel->validateCertificate($data['cnpj'], $data['senha'], $data['certificado']);
+
+        if ($isInvalid) {
+          http_response_code(400);
+          echo json_encode(['error' => $isInvalid]);
+        } else {
+          $result = $this->companyModel->create($data);
+          if ($result) {
+            http_response_code(200);
+            echo json_encode(array($result));
+          } else {
+            http_response_code(404);
+            echo json_encode(['error' => 'Data not created successfully']);
+          }
+        }
+      }
     } else {
-      http_response_code(404); // Not Found
-      echo json_encode(['error' => 'Data not created successfully']);
+      http_response_code(400);
+      echo json_encode(['error' => 'Certificado não informado']);
     }
   }
 
