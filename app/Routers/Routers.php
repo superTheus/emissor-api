@@ -2,9 +2,16 @@
 
 namespace App\Routers;
 
+use App\Controllers\CestController;
+use App\Controllers\CfopController;
 use App\Controllers\CompanyController;
 use App\Controllers\CupomFiscalController;
 use App\Controllers\FiscalController;
+use App\Controllers\FormaPagamentoController;
+use App\Controllers\IbptController;
+use App\Controllers\NcmController;
+use App\Controllers\OrigemController;
+use App\Controllers\SituacaoTributariaController;
 use App\Controllers\UtilsController;
 use Bramus\Router\Router;
 
@@ -84,6 +91,62 @@ class Routers
         $router->get('/test/{cnpj}', function ($cnpj) {
           UtilsController::testCertificate($cnpj);
         });
+      });
+    });
+
+    $router->mount('/cest', function () use ($router) {
+      $router->post('/', function () {
+        $data = json_decode(file_get_contents('php://input'), true);
+        $cestController = new CestController();
+        $cestController->find($data);
+      });
+    });
+
+    $router->mount('/cfop', function () use ($router) {
+      $router->post('/', function () {
+        $data = json_decode(file_get_contents('php://input'), true);
+        $cfopController = new CfopController();
+        $cfopController->find($data);
+      });
+    });
+
+    $router->mount('/formas', function () use ($router) {
+      $router->post('/', function () {
+        $data = json_decode(file_get_contents('php://input'), true);
+        $formaPagamentoController = new FormaPagamentoController();
+        $formaPagamentoController->find($data);
+      });
+    });
+
+    $router->mount('/ibpt', function () use ($router) {
+      $router->post('/', function () {
+        $data = json_decode(file_get_contents('php://input'), true);
+        $ibptController = new IbptController();
+        $ibptController->find($data);
+      });
+    });
+
+    $router->mount('/ncm', function () use ($router) {
+      $router->post('/', function () {
+        $data = json_decode(file_get_contents('php://input'), true);
+        $ncmController = new NcmController();
+        $ncmController->find($data);
+      });
+    });
+
+    $router->mount('/origem', function () use ($router) {
+      $router->post('/', function () {
+        $data = json_decode(file_get_contents('php://input'), true);
+        $origemController = new OrigemController();
+        $origemController->find($data);
+      });
+    });
+
+    $router->mount('/situacao', function () use ($router) {
+      $router->post('/', function () {
+        $data = json_decode(file_get_contents('php://input'), true);
+        $situacaoTributariaController = new SituacaoTributariaController();
+        $situacaoTributariaController->find($data);
       });
     });
 
