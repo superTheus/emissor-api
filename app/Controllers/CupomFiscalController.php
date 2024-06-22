@@ -116,7 +116,12 @@ class CupomFiscalController extends Connection
       UtilsController::uploadXml($this->currentXML, $this->currentChave);
       UtilsController::uploadPdf($pdf, $this->currentChave);
 
-      echo $this->currentChave;
+      http_response_code(200);
+      echo json_encode([
+        "xml" => $this->currentXML,
+        "pdf" => base64_encode($pdf),
+        "chave" => $this->currentChave,
+      ]);
     } catch (\Exception $e) {
       http_response_code(500);
       echo json_encode(['error' => $e->getMessage(), "error_tags" => $this->nfe->getErrors()]);
