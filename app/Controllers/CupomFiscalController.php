@@ -4,9 +4,11 @@ namespace App\Controllers;
 
 use App\Models\CompanyModel;
 use App\Models\Connection;
+use App\Models\FormaPagamentoModel;
 use NFePHP\Common\Certificate;
 use NFePHP\Common\Keys;
 use NFePHP\DA\NFe\Danfce;
+use NFePHP\NFe\Common\Standardize;
 use NFePHP\NFe\Make;
 use NFePHP\NFe\Tools;
 use stdClass;
@@ -29,42 +31,44 @@ class CupomFiscalController extends Connection
   private $baseCalculo = 0;
   private $totalIcms = 0;
   private $valorIcms = 0;
+  private $data;
+  private $warnings = [];
 
-  public function __construct($cnpj = null)
+  public function __construct($data)
   {
     $this->nfe = new Make();
+    $this->data = $data;
 
-    if ($cnpj) {
+    if ($data['cnpj']) {
       $companyModel = new CompanyModel();
       $company = $companyModel->find([
-        "cnpj" => $cnpj
+        "cnpj" => $data['cnpj']
       ]);
 
       $this->company = new CompanyModel($company[0]['id']);
       $this->certificado = UtilsController::getCertifcado($this->company->getCertificado());
       $this->config = $this->setConfig();
       $this->dataEmissao = date('Y-m-d\TH:i:sP');
+      $this->modo_emissao = $data['modoEmissao'];
 
-      array_push($this->produtos, [
-        "codigo" => str_pad(1, 4, "0", STR_PAD_LEFT),
-        "ean" => "7892840800079",
-        "descricao" => "REFRIGERANTE PEPSI LATA 350ML",
-        "ncm" => "22021000",
-        "cfop" => "5102",
-        "unidade" => "UN",
-        "quantidade" => 1,
-        "valor" => 4.50,
-        "total" => 4.50,
-      ]);
+      $this->produtos = $data['produtos'];
+      $this->pagamentos = array_map(function ($pagamento) {
+        $formaPagamentoModel = new FormaPagamentoModel($pagamento['codigo']);
 
-      array_push($this->pagamentos, [
-        "indPag"    => 1,
-        "tPag"      => 4,
-        "valorpago" => 4.50
-      ]);
+        return [
+          "indPag"    => $formaPagamentoModel->getCurrent()->cod_meio,
+          "tPag"      => $formaPagamentoModel->getCurrent()->codigo,
+          "valorpago" => $pagamento['valorpago']
+        ];
+      }, $data['pagamentos']);
 
       $this->tools = new Tools(json_encode($this->config), Certificate::readPfx($this->certificado, $this->company->getSenha()));
       $this->tools->model('65');
+
+      if ($this->conexaoSefaz() === false) {
+        $this->modo_emissao = 9;
+        array_push($this->warnings, "Não foi possível se conectar com a SEFAZ, a nota será emitida em modo de contingência");
+      }
 
       $this->montaChave();
     }
@@ -78,14 +82,20 @@ class CupomFiscalController extends Connection
       $this->nfe->taginfNFe($std);
       $this->nfe->tagide($this->generateIdeData([]));
       $this->nfe->tagemit($this->generateDataCompany());
-      $this->nfe->tagenderEmit($this->generateDataAddress([]));
-      $this->nfe->tagdest($this->generateClientData([]));
-      $this->nfe->tagenderDest($this->generateClientAddressData([]));
+      $this->nfe->tagenderEmit($this->generateDataAddress());
+      $this->nfe->tagdest($this->generateClientData($this->data));
+
+      if (isset($data['cliente']) && !empty($data['cliente'])) {
+        $this->nfe->tagenderDest($this->generateClientAddressData($data['cliente']['endereco']));
+      }
 
       foreach ($this->produtos as $index => $produto) {
-        $this->baseCalculo = $produto['total'];
+        $this->baseCalculo = ($produto['total'] - $produto['desconto'] + $produto['frete'] + $produto['acrescimo']);
         $this->valorIcms = 0;
         $this->nfe->tagprod($this->generateProductData($produto, $index + 1));
+        if (isset($produto['informacoes_adicionais']) && !empty($produto['informacoes_adicionais'])) {
+          $this->nfe->taginfAdProd($this->generateProdutoInfoAdicional($produto, $index + 1));
+        }
         $this->nfe->tagimposto($this->generateImpostoData($produto, $index + 1));
         $this->nfe->tagICMSSN($this->generateIcmssnData($produto, $index + 1));
         $this->totalIcms += number_format($this->valorIcms, 2, ".", "");
@@ -116,11 +126,14 @@ class CupomFiscalController extends Connection
       UtilsController::uploadXml($this->currentXML, $this->currentChave);
       UtilsController::uploadPdf($pdf, $this->currentChave);
 
+      $this->atualizaNumero();
+
       http_response_code(200);
       echo json_encode([
-        "xml" => $this->currentXML,
-        "pdf" => base64_encode($pdf),
         "chave" => $this->currentChave,
+        "avisos" => $this->warnings,
+        "xml" => $this->currentXML,
+        "pdf" => base64_encode($pdf)
       ]);
     } catch (\Exception $e) {
       http_response_code(500);
@@ -152,21 +165,21 @@ class CupomFiscalController extends Connection
     return $config;
   }
 
-  private function generateIdeData($data)
+  private function generateIdeData()
   {
     $std = new stdClass();
-    $std->cUF = 13;
+    $std->cUF = $this->company->getCodigo_uf();
     $std->cNF = str_pad((date('Y') . 100), 8, '0', STR_PAD_LEFT);
     $std->natOp = 'VENDA';
-    $std->mod = 65; // Modelo 65 para NFC-e
-    $std->serie = 1;
-    $std->nNF = 100;
+    $std->mod = 65;
+    $std->serie = $this->company->getSerie_nfce();
+    $std->nNF = $this->company->getNumero_nfce();
     $std->dhEmi = $this->dataEmissao;
     $std->indPag = 0;
     $std->dhSaiEnt = null;
     $std->tpNF = 1;
     $std->idDest = 1;
-    $std->cMunFG = '1302603';
+    $std->cMunFG = $this->company->getCodigo_municipio();
     $std->tpImp = 4;
     $std->tpEmis = $this->modo_emissao;
     $std->cDV = mb_substr($this->currentChave, -1);
@@ -195,13 +208,13 @@ class CupomFiscalController extends Connection
     return $std;
   }
 
-  private function generateDataAddress($data)
+  private function generateDataAddress()
   {
     $std = new stdClass();
     $std->xLgr = $this->company->getLogradouro();
     $std->nro = $this->company->getNumero();
     $std->xBairro = $this->company->getBairro();
-    $std->cMun = '1302603';
+    $std->cMun = $this->company->getCodigo_municipio();
     $std->xMun = $this->company->getCidade();
     $std->UF = $this->company->getUf();
     $std->CEP = $this->company->getCep();
@@ -214,22 +227,33 @@ class CupomFiscalController extends Connection
   private function generateClientData($data)
   {
     $std = new stdClass();
-    $std->xNome = 'Matheus Souza';
     $std->indIEDest = 9;
-    $std->CPF = '70259203203';
+
+    if (isset($data['cliente']) && !empty($data['cliente'])) {
+      $cliente = $data['cliente'];
+      $std->xNome = $cliente['nome'];
+      if ($cliente['tipo_documento'] === 'CPF') {
+        $std->CPF = UtilsController::soNumero($cliente['documento']);
+      } else {
+        $std->CNPJ = UtilsController::soNumero($cliente['documento']);
+      }
+    } else {
+      $std->xNome = "Consumidor Final";
+    }
+
     return $std;
   }
 
-  private function generateClientAddressData($data)
+  private function generateClientAddressData($endereco)
   {
     $std = new stdClass();
-    $std->xLgr = "Rua Teste";
-    $std->nro = '203';
-    $std->xBairro = 'Compensa';
-    $std->cMun = '1302603';
-    $std->xMun = 'Manaus';
-    $std->UF = 'AM';
-    $std->CEP = 69035115;
+    $std->xLgr = $endereco['logradouro'];
+    $std->nro = $endereco['numero'];
+    $std->xBairro = $endereco['bairro'];
+    $std->cMun = $endereco['codigo_municipio'];
+    $std->xMun = $endereco['municipio'];
+    $std->UF = $endereco['uf'];
+    $std->CEP = UtilsController::soNumero($endereco['uf']);
     $std->cPais = '1058';
     $std->xPais = 'BRASIL';
 
@@ -248,15 +272,36 @@ class CupomFiscalController extends Connection
     $std->CFOP = $produto['cfop'];
     $std->uCom = $produto['unidade'];
     $std->qCom = $produto['quantidade'];
-    $std->vUnCom = $produto['valor'];
+    $std->vUnCom = number_format($produto['valor'], 2, ".", "");
     $std->vProd = $produto['total'];
     $std->cEANTrib  = $produto['ean'];
     $std->uTrib = $produto['unidade'];
     $std->qTrib = $produto['quantidade'];
-    $std->vUnTrib = $produto['valor'];
+    $std->vUnTrib = number_format($produto['valor'], 2, ".", "");
     $std->indTot = 1;
 
-    $this->total_produtos += $produto['total'];
+    if (isset($produto['frete']) && $produto['frete'] > 0) {
+      $std->vFrete = number_format($produto['frete'], 2, ".", "");
+    }
+
+    if (isset($produto['desconto']) && $produto['desconto'] > 0) {
+      $std->vDesc = number_format($produto['desconto'], 2, ".", "");
+    }
+
+    if (isset($produto['acrescimo']) && $produto['acrescimo'] > 0) {
+      $std->vDesc = number_format($produto['acrescimo'], 2, ".", "");
+    }
+
+    $this->total_produtos += floatval($produto['total']);
+
+    return $std;
+  }
+
+  private function generateProdutoInfoAdicional($produto, $item)
+  {
+    $std = new stdClass();
+    $std->item = $item;
+    $std->infAdProd = $produto['informacoes_adicionais'];
 
     return $std;
   }
@@ -274,8 +319,8 @@ class CupomFiscalController extends Connection
   {
     $std = new stdClass();
     $std->item    = $item;
-    $std->orig    = 0;
-    $std->CSOSN   = '102';
+    $std->orig    = $produto['origem'];
+    $std->CSOSN   = $this->company->getSituacao_tributaria();
     $std->vBC     = 0.00;
     $std->pICMS   = 0.00;
     $std->vICMS   = 0.00;
@@ -341,7 +386,7 @@ class CupomFiscalController extends Connection
   private function generateFaturaData()
   {
     $std = new stdClass();
-    $std->vTroco = 0;
+    $std->vTroco = $this->data['troco'];
 
     return $std;
   }
@@ -351,7 +396,7 @@ class CupomFiscalController extends Connection
     $std            = new stdClass();
     $std->indPag    = $pagamento['indPag'];
     $std->tPag      = STR_PAD($pagamento['tPag'], 2, '0', STR_PAD_LEFT);
-    $std->vPag      = $pagamento['valorpago'];
+    $std->vPag      = number_format($pagamento['valorpago'], 2, ".", "");
 
     return $std;
   }
@@ -376,10 +421,37 @@ class CupomFiscalController extends Connection
       date('m', strtotime($this->dataEmissao)),
       $this->company->getCnpj(),
       65,
-      1,
-      100,
+      $this->company->getSerie_nfce(),
+      $this->company->getNumero_nfce(),
       $this->modo_emissao,
-      str_pad((date('Y') . 100), 8, '0', STR_PAD_LEFT)
+      str_pad((date('Y') . $this->company->getNumero_nfce()), 8, '0', STR_PAD_LEFT)
     );
+  }
+
+  private function atualizaNumero()
+  {
+    $this->company->setNumero_nfce(intval($this->company->getNumero_nfce()) + 1);
+    $this->company->update([
+      "numero_nfce" => $this->company->getNumero_nfce()
+    ]);
+  }
+
+  private function conexaoSefaz()
+  {
+    try {
+      $tpAmb = $this->ambiente;
+      $uf    =  strtoupper($this->company->getUf());
+      $resp_status = $this->tools->sefazStatus($uf, $tpAmb);
+      $stdCl = new Standardize($resp_status);
+
+      $cStatus = $stdCl->toStd()->cStat;
+      if ($cStatus === '107') {
+        return true;
+      }
+
+      return false;
+    } catch (\Exception $e) {
+      return false;
+    }
   }
 }

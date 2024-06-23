@@ -73,7 +73,7 @@ class CompanyController
 
     if ($result) {
       http_response_code(200); // OK
-      echo json_encode(array($result));
+      echo json_encode($result);
     } else {
       http_response_code(404); // Not Found
       echo json_encode(['error' => 'Data not updated successfully']);

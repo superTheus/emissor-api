@@ -7,35 +7,35 @@ use stdClass;
 class FormaPagamentoModel extends Connection
 {
   private $conn;
-  private $id;
-  private $id_formasefaz;
+  private $codigo;
   private $descricao;
+  private $cod_meio;
   private $meio;
-  private $table = 'formas_pagamento';
+  private $table = 'formas_pagtosefaz';
 
-  public function __construct($id = null)
+  public function __construct($codigo = null)
   {
     $this->conn = $this->openConnection();
 
-    if ($id) {
-      $this->setId($id);
+    if ($codigo) {
+      $this->setCodigo($codigo);
       $this->getById();
     }
   }
 
   private function getById()
   {
-    $sql = "SELECT * FROM {$this->table} WHERE id = :id";
+    $sql = "SELECT * FROM {$this->table} WHERE codigo = :codigo";
 
     try {
       $stmt = $this->conn->prepare($sql);
-      $stmt->bindParam(':id', $this->id);
+      $stmt->bindParam(':codigo', $this->codigo);
       $stmt->execute();
 
-      $cest = $stmt->fetch(\PDO::FETCH_ASSOC);
-      $this->setId_formasefaz($cest['id_formasefaz']);
-      $this->setDescricao($cest['descricao']);
-      $this->setMeio($cest['meio']);
+      $forma = $stmt->fetch(\PDO::FETCH_ASSOC);
+      $this->setDescricao($forma['descricao']);
+      $this->setCod_meio($forma['cod_meio']);
+      $this->setMeio($forma['meio']);
     } catch (\PDOException $e) {
       echo $e->getMessage();
     }
@@ -44,10 +44,10 @@ class FormaPagamentoModel extends Connection
   public function getCurrent()
   {
     $data = new stdClass();
-    $data->id = $this->getId();
-    $data->id_formasefaz = $this->getId_formasefaz();
-    $data->descricao = $this->getDescricao();
-    $data->meio = $this->getMeio();
+    $data->codigo = $this->codigo;
+    $data->descricao = $this->descricao;
+    $data->cod_meio = $this->cod_meio;
+    $data->meio = $this->meio;
 
     return $data;
   }
@@ -89,41 +89,21 @@ class FormaPagamentoModel extends Connection
   }
 
   /**
-   * Get the value of id
+   * Get the value of codigo
    */
-  public function getId()
+  public function getCodigo()
   {
-    return $this->id;
+    return $this->codigo;
   }
 
   /**
-   * Set the value of id
+   * Set the value of codigo
    *
    * @return  self
    */
-  public function setId($id)
+  public function setCodigo($codigo)
   {
-    $this->id = $id;
-
-    return $this;
-  }
-
-  /**
-   * Get the value of id_formasefaz
-   */
-  public function getId_formasefaz()
-  {
-    return $this->id_formasefaz;
-  }
-
-  /**
-   * Set the value of id_formasefaz
-   *
-   * @return  self
-   */
-  public function setId_formasefaz($id_formasefaz)
-  {
-    $this->id_formasefaz = $id_formasefaz;
+    $this->codigo = $codigo;
 
     return $this;
   }
@@ -144,6 +124,26 @@ class FormaPagamentoModel extends Connection
   public function setDescricao($descricao)
   {
     $this->descricao = $descricao;
+
+    return $this;
+  }
+
+  /**
+   * Get the value of cod_meio
+   */
+  public function getCod_meio()
+  {
+    return $this->cod_meio;
+  }
+
+  /**
+   * Set the value of cod_meio
+   *
+   * @return  self
+   */
+  public function setCod_meio($cod_meio)
+  {
+    $this->cod_meio = $cod_meio;
 
     return $this;
   }

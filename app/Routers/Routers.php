@@ -79,7 +79,7 @@ class Routers
 
       $router->post('/nfce', function () {
         $data = json_decode(file_get_contents('php://input'), true);
-        $cupomfiscalController = new CupomFiscalController($data['cnpj']);
+        $cupomfiscalController = new CupomFiscalController($data);
         $cupomfiscalController->createNfe();
       });
 

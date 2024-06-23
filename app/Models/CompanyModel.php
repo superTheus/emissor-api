@@ -30,6 +30,13 @@ class CompanyModel extends Connection
   private $csc_id;
   private $datahora;
   private $tpamb;
+  private $serie_nfce;
+  private $numero_nfce;
+  private $serie_nfe;
+  private $numero_nfe;
+  private $codigo_municipio;
+  private $codigo_uf;
+  private $situacao_tributaria;
   private $table = 'empresa';
 
   function __construct($id = null)
@@ -74,6 +81,13 @@ class CompanyModel extends Connection
       $this->setCsc_id($company['csc_id']);
       $this->setDatahora($company['datahora']);
       $this->setTpamb($company['tpamb']);
+      $this->setSerie_nfce($company['serie_nfce']);
+      $this->setNumero_nfce($company['numero_nfce']);
+      $this->setSerie_nfe($company['serie_nfe']);
+      $this->setNumero_nfe($company['numero_nfe']);
+      $this->setCodigo_municipio($company['codigo_municipio']);
+      $this->setCodigo_uf($company['codigo_uf']);
+      $this->setSituacao_tributaria($company['situacao_tributaria']);
     } catch (\PDOException $e) {
       echo $e->getMessage();
     }
@@ -104,6 +118,13 @@ class CompanyModel extends Connection
     $data->csc_id = $this->getCsc_id();
     $data->datahora = $this->getDatahora();
     $data->tpamb = $this->getTpamb();
+    $data->serie_nfce = $this->getSerie_nfce();
+    $data->numero_nfce = $this->getNumero_nfce();
+    $data->serie_nfe = $this->getSerie_nfe();
+    $data->numero_nfe = $this->getNumero_nfe();
+    $data->codigo_municipio = $this->getCodigo_municipio();
+    $data->codigo_uf = $this->getCodigo_uf();
+    $data->situacao_tributaria = $this->getSituacao_tributaria();
     $data->dados_certificado = $this->getCertificate();
 
     return $data;
@@ -148,10 +169,14 @@ class CompanyModel extends Connection
   public function create($data)
   {
     $sql = "INSERT INTO {$this->table} (
-      cnpj, razao_social, nome_fantasia, telefone, email, cep, logradouro, numero, bairro, cidade, uf, certificado, senha, csc, csc_id
+      cnpj, razao_social, nome_fantasia, telefone, email, cep, logradouro, numero, 
+      bairro, cidade, uf, certificado, senha, csc, csc_id, serie_nfce, numero_nfce, 
+      serie_nfe, numero_nfe, codigo_municipio, codigo_uf, situacao_tributaria
     ) 
     VALUES (
-      :cnpj, :razao_social, :nome_fantasia, :telefone, :email, :cep, :logradouro, :numero, :bairro, :cidade, :uf, :certificado, :senha, :csc, :csc_id
+      :cnpj, :razao_social, :nome_fantasia, :telefone, :email, :cep, :logradouro, :numero, 
+      :bairro, :cidade, :uf, :certificado, :senha, :csc, :csc_id, :serie_nfce, :numero_nfce, 
+      :serie_nfe, :numero_nfe, :codigo_municipio, :codigo_uf, :situacao_tributaria
     )";
 
     try {
@@ -171,6 +196,14 @@ class CompanyModel extends Connection
       $stmt->bindParam(':senha', $data['senha']);
       $stmt->bindParam(':csc', $data['csc']);
       $stmt->bindParam(':csc_id', $data['csc_id']);
+      $stmt->bindParam(':serie_nfce', $data['serie_nfce']);
+      $stmt->bindParam(':numero_nfce', $data['numero_nfce']);
+      $stmt->bindParam(':serie_nfe', $data['serie_nfe']);
+      $stmt->bindParam(':numero_nfe', $data['numero_nfe']);
+      $stmt->bindParam(':codigo_municipio', $data['codigo_municipio']);
+      $stmt->bindParam(':codigo_uf', $data['codigo_uf']);
+      $stmt->bindParam(':situacao_tributaria', $data['situacao_tributaria']);
+
       $stmt->execute();
 
       $this->setId($this->conn->lastInsertId());
@@ -201,7 +234,14 @@ class CompanyModel extends Connection
               certificado = :certificado,
               senha = :senha,
               csc = :csc,
-              csc_id = :csc_id
+              csc_id = :csc_id,
+              serie_nfce = :serie_nfce,
+              numero_nfce = :numero_nfce,
+              serie_nfe = :serie_nfe,
+              numero_nfe = :numero_nfe,
+              codigo_municipio = :codigo_municipio,
+              codigo_uf = :codigo_uf,
+              situacao_tributaria = :situacao_tributaria
             WHERE id = :id";
 
 
@@ -229,6 +269,13 @@ class CompanyModel extends Connection
       $stmt->bindParam(':senha', $this->senha);
       $stmt->bindParam(':csc', $this->csc);
       $stmt->bindParam(':csc_id', $this->csc_id);
+      $stmt->bindParam(':serie_nfce', $this->serie_nfce);
+      $stmt->bindParam(':numero_nfce', $this->numero_nfce);
+      $stmt->bindParam(':serie_nfe', $this->serie_nfe);
+      $stmt->bindParam(':numero_nfe', $this->numero_nfe);
+      $stmt->bindParam(':codigo_municipio', $this->codigo_municipio);
+      $stmt->bindParam(':codigo_uf', $this->codigo_uf);
+      $stmt->bindParam(':situacao_tributaria', $this->situacao_tributaria);
       $stmt->bindParam(':id', $this->id);
       $stmt->execute();
 
@@ -784,6 +831,146 @@ class CompanyModel extends Connection
   public function setTpamb($tpamb)
   {
     $this->tpamb = $tpamb;
+
+    return $this;
+  }
+
+  /**
+   * Get the value of serie_nfce
+   */
+  public function getSerie_nfce()
+  {
+    return $this->serie_nfce;
+  }
+
+  /**
+   * Set the value of serie_nfce
+   *
+   * @return  self
+   */
+  public function setSerie_nfce($serie_nfce)
+  {
+    $this->serie_nfce = $serie_nfce;
+
+    return $this;
+  }
+
+  /**
+   * Get the value of numero_nfce
+   */
+  public function getNumero_nfce()
+  {
+    return $this->numero_nfce;
+  }
+
+  /**
+   * Set the value of numero_nfce
+   *
+   * @return  self
+   */
+  public function setNumero_nfce($numero_nfce)
+  {
+    $this->numero_nfce = $numero_nfce;
+
+    return $this;
+  }
+
+  /**
+   * Get the value of serie_nfe
+   */
+  public function getSerie_nfe()
+  {
+    return $this->serie_nfe;
+  }
+
+  /**
+   * Set the value of serie_nfe
+   *
+   * @return  self
+   */
+  public function setSerie_nfe($serie_nfe)
+  {
+    $this->serie_nfe = $serie_nfe;
+
+    return $this;
+  }
+
+  /**
+   * Get the value of numero_nfe
+   */
+  public function getNumero_nfe()
+  {
+    return $this->numero_nfe;
+  }
+
+  /**
+   * Set the value of numero_nfe
+   *
+   * @return  self
+   */
+  public function setNumero_nfe($numero_nfe)
+  {
+    $this->numero_nfe = $numero_nfe;
+
+    return $this;
+  }
+
+  /**
+   * Get the value of codigo_municipio
+   */
+  public function getCodigo_municipio()
+  {
+    return $this->codigo_municipio;
+  }
+
+  /**
+   * Set the value of codigo_municipio
+   *
+   * @return  self
+   */
+  public function setCodigo_municipio($codigo_municipio)
+  {
+    $this->codigo_municipio = $codigo_municipio;
+
+    return $this;
+  }
+
+  /**
+   * Get the value of codigo_uf
+   */
+  public function getCodigo_uf()
+  {
+    return $this->codigo_uf;
+  }
+
+  /**
+   * Set the value of codigo_uf
+   *
+   * @return  self
+   */
+  public function setCodigo_uf($codigo_uf)
+  {
+    $this->codigo_uf = $codigo_uf;
+
+    return $this;
+  }
+
+  /**
+   * Get the value of situacao_tributaria
+   */
+  public function getSituacao_tributaria()
+  {
+    return $this->situacao_tributaria;
+  }
+
+  /**
+   * Set the value of situacao_tributaria
+   *
+   * @return  self
+   */
+  public function setSituacao_tributaria($situacao_tributaria)
+  {
+    $this->situacao_tributaria = $situacao_tributaria;
 
     return $this;
   }
