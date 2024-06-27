@@ -171,12 +171,12 @@ class CompanyModel extends Connection
     $sql = "INSERT INTO {$this->table} (
       cnpj, razao_social, nome_fantasia, telefone, email, cep, logradouro, numero, 
       bairro, cidade, uf, certificado, senha, csc, csc_id, serie_nfce, numero_nfce, 
-      serie_nfe, numero_nfe, codigo_municipio, codigo_uf, situacao_tributaria
+      serie_nfe, numero_nfe, codigo_municipio, codigo_uf, situacao_tributaria, inscricao_estadual
     ) 
     VALUES (
       :cnpj, :razao_social, :nome_fantasia, :telefone, :email, :cep, :logradouro, :numero, 
       :bairro, :cidade, :uf, :certificado, :senha, :csc, :csc_id, :serie_nfce, :numero_nfce, 
-      :serie_nfe, :numero_nfe, :codigo_municipio, :codigo_uf, :situacao_tributaria
+      :serie_nfe, :numero_nfe, :codigo_municipio, :codigo_uf, :situacao_tributaria, :inscricao_estadual
     )";
 
     try {
@@ -203,6 +203,7 @@ class CompanyModel extends Connection
       $stmt->bindParam(':codigo_municipio', $data['codigo_municipio']);
       $stmt->bindParam(':codigo_uf', $data['codigo_uf']);
       $stmt->bindParam(':situacao_tributaria', $data['situacao_tributaria']);
+      $stmt->bindParam(':inscricao_estadual', $data['inscricao_estadual']);
 
       $stmt->execute();
 

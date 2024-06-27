@@ -4,6 +4,7 @@ namespace App\Controllers;
 
 use App\Models\CompanyModel;
 use App\Models\Connection;
+use App\Models\EmissoesModel;
 use App\Models\FormaPagamentoModel;
 use NFePHP\Common\Certificate;
 use NFePHP\Common\Keys;
@@ -18,6 +19,7 @@ class CupomFiscalController extends Connection
   private $nfe;
   private $tools;
   private $currentXML;
+  private $currentPDF;
   private $config;
   private $ambiente = 2;
   private $company;
@@ -122,18 +124,19 @@ class CupomFiscalController extends Connection
       $danfe->setDefaultFont('arial');
       $danfe->setOffLineDoublePrint(false);
       $danfe->creditsIntegratorFooter('Estoque Premium - Sistema de Gestão Comercial');
-      $pdf = $danfe->render();
+      $this->currentPDF = $danfe->render();
       UtilsController::uploadXml($this->currentXML, $this->currentChave);
-      UtilsController::uploadPdf($pdf, $this->currentChave);
+      UtilsController::uploadPdf($this->currentPDF, $this->currentChave);
 
       $this->atualizaNumero();
+      $this->salvaEmissao();
 
       http_response_code(200);
       echo json_encode([
         "chave" => $this->currentChave,
         "avisos" => $this->warnings,
         "xml" => $this->currentXML,
-        "pdf" => base64_encode($pdf)
+        "pdf" => base64_encode($this->currentPDF)
       ]);
     } catch (\Exception $e) {
       http_response_code(500);
@@ -453,5 +456,19 @@ class CupomFiscalController extends Connection
     } catch (\Exception $e) {
       return false;
     }
+  }
+
+  private function salvaEmissao()
+  {
+    $newEmissao = new EmissoesModel();
+
+    $newEmissao->setChave($this->currentChave);
+    $newEmissao->setNumero($this->company->getNumero_nfce());
+    $newEmissao->setSerie($this->company->getSerie_nfce());
+    $newEmissao->setEmpresa($this->company->getCnpj());
+    $newEmissao->setXml($this->currentXML);
+    $newEmissao->setPdf(base64_encode($this->currentPDF));
+    $newEmissao->setTipo('NFCE');
+    $newEmissao->create();
   }
 }

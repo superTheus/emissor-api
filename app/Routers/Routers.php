@@ -6,6 +6,7 @@ use App\Controllers\CestController;
 use App\Controllers\CfopController;
 use App\Controllers\CompanyController;
 use App\Controllers\CupomFiscalController;
+use App\Controllers\EmissoesController;
 use App\Controllers\FiscalController;
 use App\Controllers\FormaPagamentoController;
 use App\Controllers\IbptController;
@@ -83,9 +84,22 @@ class Routers
         $cupomfiscalController->createNfe();
       });
 
+      $router->post('/emissoes', function () {
+        $data = json_decode(file_get_contents('php://input'), true);
+        $emissoesController = new EmissoesController();
+        $emissoesController->find([
+          "filter" => $data
+        ]);
+      });
+
       $router->mount('/certicate', function () use ($router) {
         $router->get('/', function () {
           echo 'Certificado';
+        });
+
+        $router->post('/test', function () {
+          $data = json_decode(file_get_contents('php://input'), true);
+          (new EmissoesController)->verifyCertificate($data['certificado'], $data['senha']);
         });
 
         $router->get('/test/{cnpj}', function ($cnpj) {
