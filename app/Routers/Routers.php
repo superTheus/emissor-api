@@ -13,6 +13,7 @@ use App\Controllers\IbptController;
 use App\Controllers\NcmController;
 use App\Controllers\OrigemController;
 use App\Controllers\SituacaoTributariaController;
+use App\Controllers\UnidadesController;
 use App\Controllers\UtilsController;
 use Bramus\Router\Router;
 
@@ -161,6 +162,14 @@ class Routers
         $data = json_decode(file_get_contents('php://input'), true);
         $situacaoTributariaController = new SituacaoTributariaController();
         $situacaoTributariaController->find($data);
+      });
+    });
+
+    $router->mount('/unidades', function () use ($router) {
+      $router->post('/', function () {
+        $data = json_decode(file_get_contents('php://input'), true);
+        $unidadesTributariaController = new UnidadesController();
+        $unidadesTributariaController->find($data);
       });
     });
 

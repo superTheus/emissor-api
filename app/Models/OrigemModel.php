@@ -9,7 +9,7 @@ class OrigemModel extends Connection
   private $conn;
   private $id;
   private $descricao;
-  private $table = 'cest';
+  private $table = 'origem';
 
   public function __construct($id = null)
   {
