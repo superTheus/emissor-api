@@ -126,7 +126,7 @@ class CupomFiscalController extends Connection
       $danfe->creditsIntegratorFooter('Estoque Premium - Sistema de Gestão Comercial');
       $this->currentPDF = $danfe->render();
       UtilsController::uploadXml($this->currentXML, $this->currentChave);
-      UtilsController::uploadPdf($this->currentPDF, $this->currentChave);
+      $link = UtilsController::uploadPdf($this->currentPDF, $this->currentChave);
 
       $this->atualizaNumero();
       $this->salvaEmissao();
@@ -136,6 +136,7 @@ class CupomFiscalController extends Connection
         "chave" => $this->currentChave,
         "avisos" => $this->warnings,
         "xml" => $this->currentXML,
+        "link" => "http://localhost/emissor-api/" . $link,
         "pdf" => base64_encode($this->currentPDF)
       ]);
     } catch (\Exception $e) {
@@ -242,6 +243,7 @@ class CupomFiscalController extends Connection
       }
     } else {
       $std->xNome = "Consumidor Final";
+      $std->CPF = '00000000000';
     }
 
     return $std;

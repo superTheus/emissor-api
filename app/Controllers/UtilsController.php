@@ -86,6 +86,6 @@ class UtilsController
 
     file_put_contents($folderPath . "/" . $fileName, $pdf);
 
-    return $fileName;
+    return $folderPath . "/" . $fileName;
   }
 }
