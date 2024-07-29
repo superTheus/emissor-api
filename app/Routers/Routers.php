@@ -79,10 +79,18 @@ class Routers
         $fiscalController->createNfe();
       });
 
-      $router->post('/nfce', function () {
-        $data = json_decode(file_get_contents('php://input'), true);
-        $cupomfiscalController = new CupomFiscalController($data);
-        $cupomfiscalController->createNfe();
+      $router->mount('/nfce', function () use ($router) {
+        $router->post('/', function () {
+          $data = json_decode(file_get_contents('php://input'), true);
+          $cupomfiscalController = new CupomFiscalController($data);
+          $cupomfiscalController->createNfe();
+        });
+
+        $router->post('/cancel', function () {
+          $data = json_decode(file_get_contents('php://input'), true);
+          $cupomfiscalController = new CupomFiscalController();
+          $cupomfiscalController->cancelNfce($data);
+        });
       });
 
       $router->post('/emissoes', function () {

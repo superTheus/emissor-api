@@ -15,6 +15,7 @@ class EmissoesModel extends Connection
   private $xml;
   private $pdf;
   private $tipo;
+  private $protocolo;
   private $table = 'emissoes';
 
   public function __construct($chave = null)
@@ -38,6 +39,8 @@ class EmissoesModel extends Connection
 
       $emissao = $stmt->fetch(\PDO::FETCH_ASSOC);
       $this->setNumero($emissao['numero']);
+      $this->setProtocolo($emissao['protocolo']);
+      $this->setChave($emissao['chave']);
       $this->setSerie($emissao['serie']);
       $this->setEmpresa($emissao['empresa']);
       $this->setXml($emissao['xml']);
@@ -52,6 +55,7 @@ class EmissoesModel extends Connection
   {
     $data = new stdClass();
     $data->chave = $this->getChave();
+    $data->protocolo = $this->getProtocolo();
     $data->numero = $this->getNumero();
     $data->serie = $this->getSerie();
     $data->empresa = $this->getEmpresa();
@@ -96,8 +100,8 @@ class EmissoesModel extends Connection
 
   public function create()
   {
-    $sql = "INSERT INTO {$this->table} (chave, numero, serie, empresa, xml, pdf, tipo) 
-            VALUES (:chave, :numero, :serie, :empresa, :xml, :pdf, :tipo)";
+    $sql = "INSERT INTO {$this->table} (chave, numero, serie, empresa, xml, pdf, tipo, protocolo) 
+            VALUES (:chave, :numero, :serie, :empresa, :xml, :pdf, :tipo, :protocolo)";
 
     try {
       $stmt = $this->conn->prepare($sql);
@@ -108,6 +112,7 @@ class EmissoesModel extends Connection
       $stmt->bindParam(':xml', $this->xml);
       $stmt->bindParam(':pdf', $this->pdf);
       $stmt->bindParam(':tipo', $this->tipo);
+      $stmt->bindParam(':protocolo', $this->protocolo);
       $stmt->execute();
     } catch (\PDOException $e) {
       echo $e->getMessage();
@@ -250,6 +255,26 @@ class EmissoesModel extends Connection
   public function setTipo($tipo)
   {
     $this->tipo = $tipo;
+
+    return $this;
+  }
+
+  /**
+   * Get the value of protocolo
+   */
+  public function getProtocolo()
+  {
+    return $this->protocolo;
+  }
+
+  /**
+   * Set the value of protocolo
+   *
+   * @return  self
+   */
+  public function setProtocolo($protocolo)
+  {
+    $this->protocolo = $protocolo;
 
     return $this;
   }

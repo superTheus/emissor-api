@@ -34,45 +34,50 @@ class CupomFiscalController extends Connection
   private $totalIcms = 0;
   private $valorIcms = 0;
   private $data;
+  private $numeroProtocolo;
+  private $status;
+  private $currentData;
   private $warnings = [];
 
-  public function __construct($data)
+  public function __construct($data = null)
   {
-    $this->nfe = new Make();
-    $this->data = $data;
+    if ($data) {
+      $this->nfe = new Make();
+      $this->data = $data;
 
-    if ($data['cnpj']) {
-      $companyModel = new CompanyModel();
-      $company = $companyModel->find([
-        "cnpj" => $data['cnpj']
-      ]);
+      if ($data['cnpj']) {
+        $companyModel = new CompanyModel();
+        $company = $companyModel->find([
+          "cnpj" => UtilsController::soNumero($data['cnpj'])
+        ]);
 
-      $this->company = new CompanyModel($company[0]['id']);
-      $this->certificado = UtilsController::getCertifcado($this->company->getCertificado());
-      $this->config = $this->setConfig();
-      $this->dataEmissao = date('Y-m-d\TH:i:sP');
-      $this->modo_emissao = $data['modoEmissao'];
+        $this->company = new CompanyModel($company[0]['id']);
+        $this->certificado = UtilsController::getCertifcado($this->company->getCertificado());
+        $this->config = $this->setConfig();
+        $this->dataEmissao = date('Y-m-d\TH:i:sP');
+        $this->modo_emissao = $data['modoEmissao'];
 
-      $this->produtos = $data['produtos'];
-      $this->pagamentos = array_map(function ($pagamento) {
-        $formaPagamentoModel = new FormaPagamentoModel($pagamento['codigo']);
+        $this->produtos = $data['produtos'];
+        $this->pagamentos = array_map(function ($pagamento) {
+          $formaPagamentoModel = new FormaPagamentoModel($pagamento['codigo']);
 
-        return [
-          "indPag"    => $formaPagamentoModel->getCurrent()->cod_meio,
-          "tPag"      => $formaPagamentoModel->getCurrent()->codigo,
-          "valorpago" => $pagamento['valorpago']
-        ];
-      }, $data['pagamentos']);
+          return [
+            "indPag"    => $formaPagamentoModel->getCurrent()->cod_meio,
+            "tPag"      => $formaPagamentoModel->getCurrent()->codigo,
+            "valorpago" => $pagamento['valorpago']
+          ];
+        }, $data['pagamentos']);
 
-      $this->tools = new Tools(json_encode($this->config), Certificate::readPfx($this->certificado, $this->company->getSenha()));
-      $this->tools->model('65');
+        $this->tools = new Tools(json_encode($this->config), Certificate::readPfx($this->certificado, $this->company->getSenha()));
+        $this->tools->model('65');
 
-      if ($this->conexaoSefaz() === false) {
-        $this->modo_emissao = 9;
-        array_push($this->warnings, "Não foi possível se conectar com a SEFAZ, a nota será emitida em modo de contingência");
+        if ($this->conexaoSefaz() === false) {
+          $this->modo_emissao = 9;
+          array_push($this->warnings, "Não foi possível se conectar com a SEFAZ, a nota será emitida em modo de contingência");
+        }
+
+        $this->montaChave();
       }
-
-      $this->montaChave();
     }
   }
 
@@ -117,31 +122,78 @@ class CupomFiscalController extends Connection
       $this->currentXML = $this->nfe->getXML();
       $this->currentXML = $this->tools->signNFe($this->currentXML);
 
-      $danfe = new Danfce($this->currentXML);
-      $danfe->debugMode(true);
-      $danfe->setPaperWidth(80);
-      $danfe->setMargins(2);
-      $danfe->setDefaultFont('arial');
-      $danfe->setOffLineDoublePrint(false);
-      $danfe->creditsIntegratorFooter('Estoque Premium - Sistema de Gestão Comercial');
-      $this->currentPDF = $danfe->render();
-      UtilsController::uploadXml($this->currentXML, $this->currentChave);
-      $link = UtilsController::uploadPdf($this->currentPDF, $this->currentChave);
+      $response = $this->tools->sefazEnviaLote([$this->currentXML], 1);
 
-      $this->atualizaNumero();
-      $this->salvaEmissao();
-
-      http_response_code(200);
-      echo json_encode([
-        "chave" => $this->currentChave,
-        "avisos" => $this->warnings,
-        "xml" => $this->currentXML,
-        "link" => "http://localhost/emissor-api/" . $link,
-        "pdf" => base64_encode($this->currentPDF)
-      ]);
+      $stdCl = new Standardize();
+      $std = $stdCl->toStd($response);
+      $this->setCurrentData($std);
+      $this->analisaRetorno($std);
     } catch (\Exception $e) {
       http_response_code(500);
       echo json_encode(['error' => $e->getMessage(), "error_tags" => $this->nfe->getErrors()]);
+    }
+  }
+
+  public function cancelNfce($data)
+  {
+    try {
+      $companyModel = new CompanyModel();
+      $company = $companyModel->find([
+        "cnpj" => UtilsController::soNumero($data['cnpj'])
+      ]);
+
+      if (!$company) {
+        http_response_code(404);
+        echo json_encode([
+          "error" => "Empresa não encontrada"
+        ]);
+        return;
+      }
+
+      $this->company = new CompanyModel($company[0]['id']);
+      $this->certificado = UtilsController::getCertifcado($this->company->getCertificado());
+      $this->config = $this->setConfig();
+
+      $emissoesModel = new EmissoesModel($data['chave']);
+      $emissao = $emissoesModel->getCurrent();
+
+      $this->tools = new Tools(json_encode($this->config), Certificate::readPfx($this->certificado, $this->company->getSenha()));
+
+      $response = $this->tools->sefazCancela($emissao->chave, $data['justificativa'], $emissao->protocolo, 2);
+      $stdCl = new Standardize();
+      $std = $stdCl->toStd($response);
+
+      if ($std->cStat == 128) {
+        foreach ($std->retEvento as $evento) {
+          if ($evento->infEvento->cStat == 135) {
+            $protocolo = $evento->infEvento->nProt;
+            echo "Cancelamento homologado com sucesso! Protocolo: " . $protocolo;
+
+            http_response_code(200);
+            echo json_encode([
+              "status" => "success",
+              "message" => "Cancelamento homologado com sucesso!",
+              "protocolo" => $protocolo
+            ]);
+          } else {
+            // Cancelamento rejeitado
+            echo "Erro ao cancelar: " . $evento->infEvento->xMotivo;
+
+            http_response_code(500);
+            echo json_encode([
+              "status" => "error",
+              "message" => "Erro ao cancelar: " . $evento->infEvento->xMotivo
+            ]);
+          }
+        }
+      } else if ($std->cStat == 135) {
+        echo "Cancelamento realizado com sucesso!";
+      } else {
+        echo "Erro ao cancelar: " . $std->xMotivo;
+      }
+    } catch (\Exception $e) {
+      http_response_code(500);
+      echo json_encode(['error' => $e->getMessage()]);
     }
   }
 
@@ -460,6 +512,98 @@ class CupomFiscalController extends Connection
     }
   }
 
+  private function analisaRetorno($std)
+  {
+
+
+    try {
+      if (isset($std->cStat)) {
+        $this->setStatus($std->cStat);
+        switch ($std->cStat) {
+          case 100:
+            $this->processarEmissao($std);
+            break;
+          case 103:
+            $this->processarLote($this->getCurrentData());
+            break;
+          case 104:
+            $this->loteProcessado($std);
+            break;
+          case 105:
+            $this->processarLote($this->getCurrentData());
+            break;
+          default:
+            http_response_code(403);
+            echo json_encode([
+              "error" => $std->xMotivo
+            ]);
+            break;
+        }
+      }
+    } catch (\Exception $e) {
+      http_response_code(500);
+      echo json_encode(['error' => $e->getMessage()]);
+    }
+  }
+
+  private function processarLote($std)
+  {
+    $recibo = $std->infRec->nRec;
+    $response = $this->tools->sefazConsultaRecibo($recibo);
+
+    $stdCl = new Standardize();
+    $std = $stdCl->toStd($response);
+
+    $this->analisaRetorno($std);
+  }
+
+  private function loteProcessado($std)
+  {
+    foreach ($std->protNFe as $prot) {
+      $this->analisaRetorno($prot);
+    }
+  }
+
+  private function processarEmissao($std)
+  {
+    if (isset($std->protNFe)) {
+      $this->currentChave = $std->protNFe->infProt->chNFe;
+      $this->numeroProtocolo = $std->protNFe->infProt->nProt;
+    }
+
+    if (isset($std->chNFe)) {
+      $this->currentChave = $std->chNFe;
+    }
+
+    if (isset($std->nProt)) {
+      $this->numeroProtocolo = $std->nProt;
+    }
+
+    $danfe = new Danfce($this->currentXML);
+    $danfe->debugMode(true);
+    $danfe->setPaperWidth(80);
+    $danfe->setMargins(2);
+    $danfe->setDefaultFont('arial');
+    $danfe->setOffLineDoublePrint(false);
+    $danfe->creditsIntegratorFooter('Estoque Premium - Sistema de Gestão Comercial');
+    $this->currentPDF = $danfe->render();
+    UtilsController::uploadXml($this->currentXML, $this->currentChave);
+    $link = UtilsController::uploadPdf($this->currentPDF, $this->currentChave);
+
+    $this->atualizaNumero();
+    $this->salvaEmissao();
+
+    http_response_code(200);
+    echo json_encode([
+      "chave" => $this->currentChave,
+      "avisos" => $this->warnings,
+      "protocolo" => $this->numeroProtocolo,
+      "link" => "http://localhost/emissor-api/" . $link,
+      "xml" => $this->currentXML,
+      "pdf" => base64_encode($this->currentPDF)
+    ]);
+  }
+
   private function salvaEmissao()
   {
     $newEmissao = new EmissoesModel();
@@ -471,6 +615,47 @@ class CupomFiscalController extends Connection
     $newEmissao->setXml($this->currentXML);
     $newEmissao->setPdf(base64_encode($this->currentPDF));
     $newEmissao->setTipo('NFCE');
+    $newEmissao->setProtocolo($this->numeroProtocolo);
     $newEmissao->create();
+  }
+
+  /**
+   * Get the value of status
+   */
+  public function getStatus()
+  {
+    return $this->status;
+  }
+
+  /**
+   * Set the value of status
+   *
+   * @return  self
+   */
+  public function setStatus($status)
+  {
+    $this->status = $status;
+
+    return $this;
+  }
+
+  /**
+   * Get the value of currentData
+   */
+  public function getCurrentData()
+  {
+    return $this->currentData;
+  }
+
+  /**
+   * Set the value of currentData
+   *
+   * @return  self
+   */
+  public function setCurrentData($currentData)
+  {
+    $this->currentData = $currentData;
+
+    return $this;
   }
 }
