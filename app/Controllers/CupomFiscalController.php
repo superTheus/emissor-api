@@ -38,6 +38,7 @@ class CupomFiscalController extends Connection
   private $status;
   private $currentData;
   private $warnings = [];
+  private $mod = 65;
 
   public function __construct($data = null)
   {
@@ -55,21 +56,29 @@ class CupomFiscalController extends Connection
         $this->certificado = UtilsController::getCertifcado($this->company->getCertificado());
         $this->config = $this->setConfig();
         $this->dataEmissao = date('Y-m-d\TH:i:sP');
-        $this->modo_emissao = $data['modoEmissao'];
+        $this->modo_emissao = isset($data['modoEmissao']) ? $data['modoEmissao'] : 1;
 
-        $this->produtos = $data['produtos'];
-        $this->pagamentos = array_map(function ($pagamento) {
-          $formaPagamentoModel = new FormaPagamentoModel($pagamento['codigo']);
+        $this->produtos = isset($data['produtos']) ? $data['produtos'] : [];
 
-          return [
-            "indPag"    => $formaPagamentoModel->getCurrent()->cod_meio,
-            "tPag"      => $formaPagamentoModel->getCurrent()->codigo,
-            "valorpago" => $pagamento['valorpago']
-          ];
-        }, $data['pagamentos']);
+        if (isset($data['pagamentos'])) {
+          $this->pagamentos = array_map(
+            function ($pagamento) {
+              $formaPagamentoModel = new FormaPagamentoModel($pagamento['codigo']);
+
+              return [
+                "indPag"    => $formaPagamentoModel->getCurrent()->cod_meio,
+                "tPag"      => $formaPagamentoModel->getCurrent()->codigo,
+                "valorpago" => $pagamento['valorpago']
+              ];
+            },
+            $data['pagamentos']
+          );
+        } else {
+          $this->pagamentos = [];
+        }
 
         $this->tools = new Tools(json_encode($this->config), Certificate::readPfx($this->certificado, $this->company->getSenha()));
-        $this->tools->model('65');
+        $this->tools->model($this->mod);
 
         if ($this->conexaoSefaz() === false) {
           $this->modo_emissao = 9;
@@ -90,7 +99,9 @@ class CupomFiscalController extends Connection
       $this->nfe->tagide($this->generateIdeData([]));
       $this->nfe->tagemit($this->generateDataCompany());
       $this->nfe->tagenderEmit($this->generateDataAddress());
-      $this->nfe->tagdest($this->generateClientData($this->data));
+      if (isset($data['cliente']) && !empty($data['cliente']) && $data['cliente']['nome'] !== 'CONSUMIDOR FINAL') {
+        $this->nfe->tagdest($this->generateClientData($this->data));
+      }
 
       if (isset($data['cliente']) && !empty($data['cliente'])) {
         $this->nfe->tagenderDest($this->generateClientAddressData($data['cliente']['endereco']));
@@ -118,11 +129,10 @@ class CupomFiscalController extends Connection
         $this->nfe->tagdetPag($this->generatePagamentoData($pagamento));
       }
 
-      $this->nfe->montaNFe();
       $this->currentXML = $this->nfe->getXML();
       $this->currentXML = $this->tools->signNFe($this->currentXML);
 
-      $response = $this->tools->sefazEnviaLote([$this->currentXML], 1);
+      $response = $this->tools->sefazEnviaLote([$this->currentXML], str_pad(1, 15, '0', STR_PAD_LEFT), 1);
 
       $stdCl = new Standardize();
       $std = $stdCl->toStd($response);
@@ -227,7 +237,7 @@ class CupomFiscalController extends Connection
     $std->cUF = $this->company->getCodigo_uf();
     $std->cNF = str_pad((date('Y') . 100), 8, '0', STR_PAD_LEFT);
     $std->natOp = 'VENDA';
-    $std->mod = 65;
+    $std->mod = $this->mod;
     $std->serie = $this->company->getSerie_nfce();
     $std->nNF = $this->company->getNumero_nfce();
     $std->dhEmi = $this->dataEmissao;
@@ -287,15 +297,20 @@ class CupomFiscalController extends Connection
 
     if (isset($data['cliente']) && !empty($data['cliente'])) {
       $cliente = $data['cliente'];
-      $std->xNome = $cliente['nome'];
-      if ($cliente['tipo_documento'] === 'CPF') {
-        $std->CPF = UtilsController::soNumero($cliente['documento']);
+      if (strtoupper($cliente['nome']) !== 'CONSUMIDOR FINAL') {
+        $std->xNome = $cliente['nome'];
+        if ($cliente['tipo_documento'] === 'CPF') {
+          $std->CPF = UtilsController::soNumero($cliente['documento']);
+        } else {
+          $std->CNPJ = UtilsController::soNumero($cliente['documento']);
+        }
       } else {
-        $std->CNPJ = UtilsController::soNumero($cliente['documento']);
+        $std->xNome = "Consumidor Final";
+        $std->CPF = '00000000000';
       }
     } else {
       $std->xNome = "Consumidor Final";
-      $std->CPF = '00000000000';
+      $std->CPF = (new UtilsController)->gerarCpfValido();
     }
 
     return $std;
@@ -443,7 +458,7 @@ class CupomFiscalController extends Connection
   private function generateFaturaData()
   {
     $std = new stdClass();
-    $std->vTroco = $this->data['troco'];
+    $std->vTroco = isset($this->data['troco']) ? $this->data['troco'] : 0;
 
     return $std;
   }
@@ -451,7 +466,7 @@ class CupomFiscalController extends Connection
   private function generatePagamentoData($pagamento)
   {
     $std            = new stdClass();
-    $std->indPag    = $pagamento['indPag'];
+    $std->indPag = isset($pagamento['indPag']) ? $pagamento['indPag'] : 0;
     $std->tPag      = STR_PAD($pagamento['tPag'], 2, '0', STR_PAD_LEFT);
     $std->vPag      = number_format($pagamento['valorpago'], 2, ".", "");
 
@@ -473,11 +488,11 @@ class CupomFiscalController extends Connection
   private function montaChave()
   {
     $this->currentChave = Keys::build(
-      13,
+      $this->company->getCodigo_uf(),
       date('y', strtotime($this->dataEmissao)),
       date('m', strtotime($this->dataEmissao)),
       $this->company->getCnpj(),
-      65,
+      $this->mod,
       $this->company->getSerie_nfce(),
       $this->company->getNumero_nfce(),
       $this->modo_emissao,
@@ -514,8 +529,6 @@ class CupomFiscalController extends Connection
 
   private function analisaRetorno($std)
   {
-
-
     try {
       if (isset($std->cStat)) {
         $this->setStatus($std->cStat);

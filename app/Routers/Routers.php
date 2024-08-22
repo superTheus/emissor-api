@@ -73,10 +73,18 @@ class Routers
         echo 'Fiscal';
       });
 
-      $router->post('/nfe', function () {
-        $data = json_decode(file_get_contents('php://input'), true);
-        $fiscalController = new FiscalController($data['cnpj']);
-        $fiscalController->createNfe();
+      $router->mount('/nfe', function () use ($router) {
+        $router->post('/', function () {
+          $data = json_decode(file_get_contents('php://input'), true);
+          $fiscalController = new FiscalController($data);
+          $fiscalController->createNfe();
+        });
+
+        $router->post('/cancel', function () {
+          $data = json_decode(file_get_contents('php://input'), true);
+          $cupomfiscalController = new CupomFiscalController();
+          $cupomfiscalController->cancelNfce($data);
+        });
       });
 
       $router->mount('/nfce', function () use ($router) {
