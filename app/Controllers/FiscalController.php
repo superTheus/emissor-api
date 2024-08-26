@@ -638,7 +638,7 @@ class FiscalController extends Connection
       "chave" => $this->currentChave,
       "avisos" => $this->warnings,
       "protocolo" => $this->numeroProtocolo,
-      "link" => "http://localhost/emissor-api/" . $link,
+      "link" => "https://estoqpremium.com.br/emissor_api/" . $link,
       "xml" => $this->currentXML,
       "pdf" => base64_encode($this->currentPDF)
     ]);
