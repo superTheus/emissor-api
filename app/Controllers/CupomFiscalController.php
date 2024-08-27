@@ -10,6 +10,7 @@ use NFePHP\Common\Certificate;
 use NFePHP\Common\Keys;
 use NFePHP\DA\NFe\Danfce;
 use NFePHP\NFe\Common\Standardize;
+use NFePHP\NFe\Complements;
 use NFePHP\NFe\Make;
 use NFePHP\NFe\Tools;
 use stdClass;
@@ -37,6 +38,7 @@ class CupomFiscalController extends Connection
   private $numeroProtocolo;
   private $status;
   private $currentData;
+  private $response;
   private $warnings = [];
   private $mod = 65;
 
@@ -132,10 +134,10 @@ class CupomFiscalController extends Connection
       $this->currentXML = $this->nfe->getXML();
       $this->currentXML = $this->tools->signNFe($this->currentXML);
 
-      $response = $this->tools->sefazEnviaLote([$this->currentXML], str_pad(1, 15, '0', STR_PAD_LEFT), 1);
+      $this->response = $this->tools->sefazEnviaLote([$this->currentXML], str_pad(1, 15, '0', STR_PAD_LEFT), 1);
 
       $stdCl = new Standardize();
-      $std = $stdCl->toStd($response);
+      $std = $stdCl->toStd($this->response);
       $this->setCurrentData($std);
       $this->analisaRetorno($std);
     } catch (\Exception $e) {
@@ -592,6 +594,8 @@ class CupomFiscalController extends Connection
       $this->numeroProtocolo = $std->nProt;
     }
 
+    $this->currentXML = Complements::toAuthorize($this->currentXML, $this->response);
+
     $danfe = new Danfce($this->currentXML);
     $danfe->debugMode(true);
     $danfe->setPaperWidth(80);
@@ -611,8 +615,8 @@ class CupomFiscalController extends Connection
       "chave" => $this->currentChave,
       "avisos" => $this->warnings,
       "protocolo" => $this->numeroProtocolo,
-      // "link" => "https://estoqpremium.com.br/emissor_api/" . $link,
-      "link" => "http://localhost/emissor-api/" . $link,
+      "link" => "https://estoqpremium.com.br/emissor_api/" . $link,
+      // "link" => "http://localhost/emissor-api/" . $link,
       "xml" => $this->currentXML,
       "pdf" => base64_encode($this->currentPDF)
     ]);

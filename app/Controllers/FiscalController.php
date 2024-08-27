@@ -10,6 +10,7 @@ use NFePHP\Common\Certificate;
 use NFePHP\Common\Keys;
 use NFePHP\DA\NFe\Danfe;
 use NFePHP\NFe\Common\Standardize;
+use NFePHP\NFe\Complements;
 use NFePHP\NFe\Make;
 use NFePHP\NFe\Tools;
 use stdClass;
@@ -38,6 +39,7 @@ class FiscalController extends Connection
   private $status;
   private $currentData;
   private $warnings = [];
+  private $response;
   private $mod = 55;
   private $percentual_cofins = 0.65;
   private $percentual_pis = 3;
@@ -135,13 +137,11 @@ class FiscalController extends Connection
       $this->currentXML = $this->nfe->getXML();
       $this->currentXML = $this->tools->signNFe($this->currentXML);
 
-      // echo $this->currentXML;
-      // die;
 
-      $response = $this->tools->sefazEnviaLote([$this->currentXML], str_pad(1, 15, '0', STR_PAD_LEFT));
+      $this->response = $this->tools->sefazEnviaLote([$this->currentXML], str_pad(1, 15, '0', STR_PAD_LEFT));
 
       $stdCl = new Standardize();
-      $std = $stdCl->toStd($response);
+      $std = $stdCl->toStd($this->response);
       $this->setCurrentData($std);
       $this->analisaRetorno($std);
     } catch (\Exception $e) {
@@ -592,10 +592,10 @@ class FiscalController extends Connection
   private function processarLote($std)
   {
     $recibo = $std->infRec->nRec;
-    $response = $this->tools->sefazConsultaRecibo($recibo);
+    $this->response = $this->tools->sefazConsultaRecibo($recibo);
 
     $stdCl = new Standardize();
-    $std = $stdCl->toStd($response);
+    $std = $stdCl->toStd($this->response);
 
     $this->analisaRetorno($std);
   }
@@ -622,6 +622,8 @@ class FiscalController extends Connection
       $this->numeroProtocolo = $std->nProt;
     }
 
+    $this->currentXML = Complements::toAuthorize($this->currentXML, $this->response);
+
     $danfe = new Danfe($this->currentXML);
     $danfe->debugMode(true);
     $danfe->setDefaultFont('arial');
@@ -638,8 +640,8 @@ class FiscalController extends Connection
       "chave" => $this->currentChave,
       "avisos" => $this->warnings,
       "protocolo" => $this->numeroProtocolo,
-      // "link" => "https://estoqpremium.com.br/emissor_api/" . $link,
-      "link" => "http://localhost/emissor-api/" . $link,
+      "link" => "https://estoqpremium.com.br/emissor_api/" . $link,
+      // "link" => "http://localhost/emissor-api/" . $link,
       "xml" => $this->currentXML,
       "pdf" => base64_encode($this->currentPDF)
     ]);
