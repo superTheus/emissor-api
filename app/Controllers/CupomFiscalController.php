@@ -116,8 +116,15 @@ class CupomFiscalController extends Connection
         if (isset($produto['informacoes_adicionais']) && !empty($produto['informacoes_adicionais'])) {
           $this->nfe->taginfAdProd($this->generateProdutoInfoAdicional($produto, $index + 1));
         }
+
+        if (isset($produto['codigo_anp']) && !empty($produto['codigo_anp'])) {
+          $this->nfe->tagcomb($this->addCombustivelTag($produto, $index));
+          $this->nfe->tagICMS($this->addICMSCombTag($produto, $index));
+        } else {
+          $this->nfe->tagICMSSN($this->generateIcmssnData($produto, $index + 1));
+        }
+
         $this->nfe->tagimposto($this->generateImpostoData($produto, $index + 1));
-        $this->nfe->tagICMSSN($this->generateIcmssnData($produto, $index + 1));
         $this->totalIcms += number_format($this->valorIcms, 2, ".", "");
       }
 
@@ -368,6 +375,48 @@ class CupomFiscalController extends Connection
 
     $this->total_produtos += floatval($produto['total']);
 
+    return $std;
+  }
+
+  private function addCombustivelTag($produto, $item)
+  {
+    $std = new \stdClass();
+    $std->item = $item + 1;
+    $std->cProdANP = $produto['codigo_anp'];
+    $std->descANP = $produto['descricao_anp'];
+    $std->pGLP = $produto['gpl_percentual'];
+    $std->pGNn = $produto['gas_percentual_nacional'];
+    $std->vPart = $produto['valor_partida'];
+    $std->UFCons = $this->company->getUf();
+
+    return $std;
+  }
+
+  private function addICMSCombTag($produto, $item)
+  {
+    $std = new \stdClass();
+    $std->item = $item + 1;
+    $std->orig = '0';
+    $std->CST = '61';
+    $std->modBC = '3';
+    $std->vBC = '1000.00';
+    $std->vBCICMS = '1000.00';
+    $std->pICMS = '18.00';
+    $std->vICMS = '180.00';
+    $std->vBCICMSST = '1200.00';
+    $std->pICMSST = '18.00';
+    $std->vICMSST = '216.00';
+    $std->vBCFCP = '1000.00';
+    $std->pFCP = '2.00';
+    $std->vFCP = '20.00';
+    $std->vBCFCPST = '1200.00';
+    $std->pFCPST = '2.00';
+    $std->vFCPST = '24.00';
+    $std->adRemICMS = '0.50';
+    $std->vICMSMono = '50.00';
+    $std->adRemICMSRet = '0.30';
+    $std->vICMSMonoRet = '30.00';
+    $std->qBCMonoRet = $produto['quantidade'];
     return $std;
   }
 
