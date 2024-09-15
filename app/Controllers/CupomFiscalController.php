@@ -59,7 +59,7 @@ class CupomFiscalController extends Connection
         ]);
 
         $this->company = new CompanyModel($company[0]['id']);
-        $this->ambiente = $this->company->getTpamb();
+        $this->ambiente = intval($this->company->getTpamb()) > 0 ? $this->company->getTpamb() : 1;
         $this->serie = $this->company->getTpamb() === 1 ? $this->company->getSerie_nfce() : $this->company->getSerie_nfce_homologacao();
         $this->numero = $this->company->getTpamb() === 1 ? $this->company->getNumero_nfce() : $this->company->getNumero_nfce_homologacao();
         $this->csc = $this->company->getTpamb() === 1 ? $this->company->getCsc() : $this->company->getCsc_homologacao();
