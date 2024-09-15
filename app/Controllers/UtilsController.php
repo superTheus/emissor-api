@@ -116,4 +116,17 @@ class UtilsController
   {
     return round($dividendo - (floor($dividendo / $divisor) * $divisor));
   }
+
+  public static function verificarOperacaoPorCFOP($cfop)
+  {
+    $primeiroDigito = substr($cfop, 0, 1);
+
+    if (in_array($primeiroDigito, ['1', '2', '3'])) {
+      return 0;
+    } elseif (in_array($primeiroDigito, ['5', '6', '7'])) {
+      return 1;
+    }
+
+    return 0;
+  }
 }

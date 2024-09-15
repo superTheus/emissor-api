@@ -123,6 +123,18 @@ class Routers
           UtilsController::testCertificate($cnpj);
         });
       });
+
+      $router->mount('/carta', function () use ($router) {
+        $router->get('/', function () {
+          echo 'Carta';
+        });
+
+        $router->post('/', function () {
+          $data = json_decode(file_get_contents('php://input'), true);
+          $fiscalController = new FiscalController($data);
+          $fiscalController->gerarCC($data);
+        });
+      });
     });
 
     $router->mount('/cest', function () use ($router) {

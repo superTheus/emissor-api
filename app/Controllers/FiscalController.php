@@ -22,7 +22,11 @@ class FiscalController extends Connection
   private $currentXML;
   private $currentPDF;
   private $config;
-  private $ambiente = 2;
+  private $numero;
+  private $serie;
+  private $csc;
+  private $csc_id;
+  private $ambiente;
   private $company;
   private $certificado;
   private $modo_emissao = 1;
@@ -57,6 +61,11 @@ class FiscalController extends Connection
         ]);
 
         $this->company = new CompanyModel($company[0]['id']);
+        $this->ambiente = $this->company->getTpamb();
+        $this->serie = $this->company->getTpamb() === 1 ? $this->company->getSerie_nfe() : $this->company->getSerie_nfe_homologacao();
+        $this->numero = $this->company->getTpamb() === 1 ? $this->company->getNumero_nfe() : $this->company->getNumero_nfe_homologacao();
+        $this->csc = $this->company->getTpamb() === 1 ? $this->company->getCsc() : $this->company->getCsc_homologacao();
+        $this->csc_id = $this->company->getTpamb() === 1 ? $this->company->getCsc_id() : $this->company->getCsc_id_homologacao();
         $this->certificado = UtilsController::getCertifcado($this->company->getCertificado());
         $this->config = $this->setConfig();
         $this->dataEmissao = date('Y-m-d\TH:i:sP');
@@ -100,7 +109,7 @@ class FiscalController extends Connection
       $std = new stdClass();
       $std->versao = '4.00';
       $this->nfe->taginfNFe($std);
-      $this->nfe->tagide($this->generateIdeData([]));
+      $this->nfe->tagide($this->generateIdeData($this->data));
       $this->nfe->tagemit($this->generateDataCompany());
       $this->nfe->tagenderEmit($this->generateDataAddress());
       $this->nfe->tagdest($this->generateClientData($this->data));
@@ -218,6 +227,22 @@ class FiscalController extends Connection
     }
   }
 
+  public function gerarCC($data)
+  {
+    $chaveNFe = $data['chave'];
+    $correcao = $data['carta'];
+
+    $emissoesController = new EmissoesModel($data['chave']);
+    $grupoCorrecao = $emissoesController->getCurrent()->sequencia_cc;
+
+    $emissoesController->setSequencia_cc($grupoCorrecao + 1);
+    $emissoesController->update();
+
+    $response = $this->tools->sefazCCe($chaveNFe, $correcao, $grupoCorrecao);
+
+    var_dump($response);
+  }
+
   private function setConfig()
   {
     $config = [
@@ -229,8 +254,8 @@ class FiscalController extends Connection
       "schemes"     => "PL_009_V4",
       "versao"      => '4.00',
       "tokenIBPT"   => "AAAAAAA",
-      "CSC"         => $this->company->getCsc(),
-      "CSCid"       => $this->company->getCsc_id(),
+      "CSC"         => $this->csc,
+      "CSCid"       => $this->csc_id,
       "proxyConf"   => [
         "proxyIp"   => "",
         "proxyPort" => "",
@@ -242,25 +267,25 @@ class FiscalController extends Connection
     return $config;
   }
 
-  private function generateIdeData()
+  private function generateIdeData($data)
   {
     $std = new stdClass();
     $std->cUF = $this->company->getCodigo_uf();
     $std->cNF = str_pad((date('Y') . 100), 8, '0', STR_PAD_LEFT);
-    $std->natOp = 'VENDA DE MERCADORIA';
+    $std->natOp = isset($data['operacao']) ? $data['operacao'] : 'VENDA DE MERCADORIA';
     $std->mod = $this->mod;
-    $std->serie = $this->company->getSerie_nfe();
-    $std->nNF = $this->company->getNumero_nfe();
+    $std->serie = $this->serie;
+    $std->nNF = $this->numero;
     $std->dhEmi = $this->dataEmissao;
     $std->indPag = 0;
     $std->dhSaiEnt = null;
-    $std->tpNF = 1;
+    $std->tpNF = UtilsController::verificarOperacaoPorCFOP($data['cfop']);
     $std->idDest = 1;
     $std->cMunFG = $this->company->getCodigo_municipio();
     $std->tpImp = 1;
     $std->tpEmis = $this->modo_emissao;
     $std->cDV = mb_substr($this->currentChave, -1);
-    $std->tpAmb = 2;
+    $std->tpAmb = $this->ambiente;
     $std->finNFe = 1;
     $std->indFinal = 1;
     $std->indPres = 1; // Indica operação presencial
@@ -568,27 +593,32 @@ class FiscalController extends Connection
       date('m', strtotime($this->dataEmissao)),
       $this->company->getCnpj(),
       $this->mod,
-      $this->company->getSerie_nfe(),
-      $this->company->getNumero_nfe(),
+      $this->serie,
+      $this->numero,
       $this->modo_emissao,
-      str_pad((date('Y') . $this->company->getNumero_nfe()), 8, '0', STR_PAD_LEFT)
+      str_pad((date('Y') . $this->numero), 8, '0', STR_PAD_LEFT)
     );
   }
 
   private function atualizaNumero()
   {
-    $this->company->setNumero_nfe(intval($this->company->getNumero_nfe()) + 1);
-    $this->company->update([
-      "numero_nfe" => $this->company->getNumero_nfe()
-    ]);
+    if ($this->ambiente === 1) {
+      $this->company->setNumero_nfe(intval($this->numero) + 1);
+      $this->company->update([
+        "numero_nfe" => $this->company->getNumero_nfe()
+      ]);
+    } else {
+      $this->company->setNumero_nfe_homologacao(intval($this->numero) + 1);
+      $this->company->update([
+        "numero_nfe_homologacao" => $this->company->getNumero_nfe_homologacao()
+      ]);
+    }
   }
 
   private function conexaoSefaz()
   {
     try {
-      $tpAmb = $this->ambiente;
-      $uf    =  strtoupper($this->company->getUf());
-      $resp_status = $this->tools->sefazStatus($uf, $tpAmb);
+      $resp_status = $this->tools->sefazStatus(strtoupper($this->company->getUf()), $this->ambiente);
       $stdCl = new Standardize($resp_status);
 
       $cStatus = $stdCl->toStd()->cStat;
@@ -697,8 +727,8 @@ class FiscalController extends Connection
     $newEmissao = new EmissoesModel();
 
     $newEmissao->setChave($this->currentChave);
-    $newEmissao->setNumero($this->company->getNumero_nfe());
-    $newEmissao->setSerie($this->company->getSerie_nfe());
+    $newEmissao->setNumero($this->numero);
+    $newEmissao->setSerie($this->serie);
     $newEmissao->setEmpresa($this->company->getCnpj());
     $newEmissao->setXml($this->currentXML);
     $newEmissao->setPdf(base64_encode($this->currentPDF));

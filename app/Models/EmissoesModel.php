@@ -16,6 +16,7 @@ class EmissoesModel extends Connection
   private $pdf;
   private $tipo;
   private $protocolo;
+  private $sequencia_cc;
   private $table = 'emissoes';
 
   public function __construct($chave = null)
@@ -46,6 +47,7 @@ class EmissoesModel extends Connection
       $this->setXml($emissao['xml']);
       $this->setPdf($emissao['pdf']);
       $this->setTipo($emissao['tipo']);
+      $this->setSequencia_cc($emissao['sequencia_cc']);
     } catch (\PDOException $e) {
       echo $e->getMessage();
     }
@@ -62,6 +64,7 @@ class EmissoesModel extends Connection
     $data->xml = $this->getXml();
     $data->pdf = $this->getPdf();
     $data->tipo = $this->getTipo();
+    $data->sequencia_cc = $this->getSequencia_cc();
     return $data;
   }
 
@@ -113,6 +116,33 @@ class EmissoesModel extends Connection
       $stmt->bindParam(':pdf', $this->pdf);
       $stmt->bindParam(':tipo', $this->tipo);
       $stmt->bindParam(':protocolo', $this->protocolo);
+      $stmt->execute();
+    } catch (\PDOException $e) {
+      echo $e->getMessage();
+    }
+  }
+
+  public function update($data = null)
+  {
+    $sql = "UPDATE {$this->table} SET numero = :numero, serie = :serie, empresa = :empresa, xml = :xml, pdf = :pdf, tipo = :tipo, protocolo = :protocolo, sequencia_cc = :sequencia_cc WHERE chave = :chave";
+
+    if ($data) {
+      foreach ($data as $column => $value) {
+        $this->$column = $value;
+      }
+    }
+
+    try {
+      $stmt = $this->conn->prepare($sql);
+      $stmt->bindParam(':chave', $this->chave);
+      $stmt->bindParam(':numero', $this->numero);
+      $stmt->bindParam(':serie', $this->serie);
+      $stmt->bindParam(':empresa', $this->empresa);
+      $stmt->bindParam(':xml', $this->xml);
+      $stmt->bindParam(':pdf', $this->pdf);
+      $stmt->bindParam(':tipo', $this->tipo);
+      $stmt->bindParam(':protocolo', $this->protocolo);
+      $stmt->bindParam(':sequencia_cc', $this->sequencia_cc);
       $stmt->execute();
     } catch (\PDOException $e) {
       echo $e->getMessage();
@@ -275,6 +305,26 @@ class EmissoesModel extends Connection
   public function setProtocolo($protocolo)
   {
     $this->protocolo = $protocolo;
+
+    return $this;
+  }
+
+  /**
+   * Get the value of sequencia_cc
+   */
+  public function getSequencia_cc()
+  {
+    return $this->sequencia_cc;
+  }
+
+  /**
+   * Set the value of sequencia_cc
+   *
+   * @return  self
+   */
+  public function setSequencia_cc($sequencia_cc)
+  {
+    $this->sequencia_cc = $sequencia_cc;
 
     return $this;
   }

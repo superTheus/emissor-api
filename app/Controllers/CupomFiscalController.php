@@ -22,7 +22,11 @@ class CupomFiscalController extends Connection
   private $currentXML;
   private $currentPDF;
   private $config;
-  private $ambiente = 2;
+  private $numero;
+  private $serie;
+  private $csc;
+  private $csc_id;
+  private $ambiente;
   private $company;
   private $certificado;
   private $modo_emissao = 1;
@@ -55,6 +59,11 @@ class CupomFiscalController extends Connection
         ]);
 
         $this->company = new CompanyModel($company[0]['id']);
+        $this->ambiente = $this->company->getTpamb();
+        $this->serie = $this->company->getTpamb() === 1 ? $this->company->getSerie_nfce() : $this->company->getSerie_nfce_homologacao();
+        $this->numero = $this->company->getTpamb() === 1 ? $this->company->getNumero_nfce() : $this->company->getNumero_nfce_homologacao();
+        $this->csc = $this->company->getTpamb() === 1 ? $this->company->getCsc() : $this->company->getCsc_homologacao();
+        $this->csc_id = $this->company->getTpamb() === 1 ? $this->company->getCsc_id() : $this->company->getCsc_id_homologacao();
         $this->certificado = UtilsController::getCertifcado($this->company->getCertificado());
         $this->config = $this->setConfig();
         $this->dataEmissao = date('Y-m-d\TH:i:sP');
@@ -98,7 +107,7 @@ class CupomFiscalController extends Connection
       $std = new stdClass();
       $std->versao = '4.00';
       $this->nfe->taginfNFe($std);
-      $this->nfe->tagide($this->generateIdeData([]));
+      $this->nfe->tagide($this->generateIdeData($this->data));
       $this->nfe->tagemit($this->generateDataCompany());
       $this->nfe->tagenderEmit($this->generateDataAddress());
       if (isset($data['cliente']) && !empty($data['cliente']) && $data['cliente']['nome'] !== 'CONSUMIDOR FINAL') {
@@ -240,25 +249,25 @@ class CupomFiscalController extends Connection
     return $config;
   }
 
-  private function generateIdeData()
+  private function generateIdeData($data)
   {
     $std = new stdClass();
     $std->cUF = $this->company->getCodigo_uf();
     $std->cNF = str_pad((date('Y') . 100), 8, '0', STR_PAD_LEFT);
-    $std->natOp = 'VENDA';
+    $std->natOp = isset($data['operaca']) ? $data['operaca'] : 'VENDA DE MERCADORIA';
     $std->mod = $this->mod;
-    $std->serie = $this->company->getSerie_nfce();
-    $std->nNF = $this->company->getNumero_nfce();
+    $std->serie = $this->serie;
+    $std->nNF = $this->numero;
     $std->dhEmi = $this->dataEmissao;
     $std->indPag = 0;
     $std->dhSaiEnt = null;
-    $std->tpNF = 1;
+    $std->tpNF = UtilsController::verificarOperacaoPorCFOP($data['cfop']);
     $std->idDest = 1;
     $std->cMunFG = $this->company->getCodigo_municipio();
     $std->tpImp = 4;
     $std->tpEmis = $this->modo_emissao;
     $std->cDV = mb_substr($this->currentChave, -1);
-    $std->tpAmb = 2;
+    $std->tpAmb = $this->ambiente;
     $std->finNFe = 1;
     $std->indFinal = 1;
     $std->indPres = 1; // Indica operação presencial
@@ -544,27 +553,32 @@ class CupomFiscalController extends Connection
       date('m', strtotime($this->dataEmissao)),
       $this->company->getCnpj(),
       $this->mod,
-      $this->company->getSerie_nfce(),
-      $this->company->getNumero_nfce(),
+      $this->serie,
+      $this->numero,
       $this->modo_emissao,
-      str_pad((date('Y') . $this->company->getNumero_nfce()), 8, '0', STR_PAD_LEFT)
+      str_pad((date('Y') . $this->numero), 8, '0', STR_PAD_LEFT)
     );
   }
 
   private function atualizaNumero()
   {
-    $this->company->setNumero_nfce(intval($this->company->getNumero_nfce()) + 1);
-    $this->company->update([
-      "numero_nfce" => $this->company->getNumero_nfce()
-    ]);
+    if ($this->ambiente === 1) {
+      $this->company->setNumero_nfce(intval($this->numero) + 1);
+      $this->company->update([
+        "numero_nfce" => $this->company->getNumero_nfce()
+      ]);
+    } else {
+      $this->company->setNumero_nfce_homologacao(intval($this->numero) + 1);
+      $this->company->update([
+        "numero_nfce_homologacao" => $this->company->getNumero_nfce_homologacao()
+      ]);
+    }
   }
 
   private function conexaoSefaz()
   {
     try {
-      $tpAmb = $this->ambiente;
-      $uf    =  strtoupper($this->company->getUf());
-      $resp_status = $this->tools->sefazStatus($uf, $tpAmb);
+      $resp_status = $this->tools->sefazStatus(strtoupper($this->company->getUf()), $this->ambiente);
       $stdCl = new Standardize($resp_status);
 
       $cStatus = $stdCl->toStd()->cStat;
@@ -677,7 +691,7 @@ class CupomFiscalController extends Connection
 
     $newEmissao->setChave($this->currentChave);
     $newEmissao->setNumero($this->company->getNumero_nfce());
-    $newEmissao->setSerie($this->company->getSerie_nfce());
+    $newEmissao->setSerie($this->serie);
     $newEmissao->setEmpresa($this->company->getCnpj());
     $newEmissao->setXml($this->currentXML);
     $newEmissao->setPdf(base64_encode($this->currentPDF));

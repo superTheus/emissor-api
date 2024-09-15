@@ -34,6 +34,12 @@ class CompanyModel extends Connection
   private $numero_nfce;
   private $serie_nfe;
   private $numero_nfe;
+  private $serie_nfce_homologacao;
+  private $numero_nfce_homologacao;
+  private $serie_nfe_homologacao;
+  private $numero_nfe_homologacao;
+  private $csc_homologacao;
+  private $csc_id_homologacao;
   private $codigo_municipio;
   private $codigo_uf;
   private $situacao_tributaria;
@@ -88,6 +94,12 @@ class CompanyModel extends Connection
       $this->setCodigo_municipio($company['codigo_municipio']);
       $this->setCodigo_uf($company['codigo_uf']);
       $this->setSituacao_tributaria($company['situacao_tributaria']);
+      $this->setSerie_nfce_homologacao($company['serie_nfce_homologacao']);
+      $this->setNumero_nfce_homologacao($company['numero_nfce_homologacao']);
+      $this->setSerie_nfe_homologacao($company['serie_nfe_homologacao']);
+      $this->setNumero_nfe_homologacao($company['numero_nfe_homologacao']);
+      $this->setCsc_homologacao($company['csc_homologacao']);
+      $this->setCsc_id_homologacao($company['csc_id_homologacao']);
     } catch (\PDOException $e) {
       echo $e->getMessage();
     }
@@ -126,6 +138,12 @@ class CompanyModel extends Connection
     $data->codigo_uf = $this->getCodigo_uf();
     $data->situacao_tributaria = $this->getSituacao_tributaria();
     $data->dados_certificado = $this->getCertificate();
+    $data->serie_nfce_homologacao = $this->getSerie_nfce_homologacao();
+    $data->numero_nfce_homologacao = $this->getNumero_nfce_homologacao();
+    $data->serie_nfe_homologacao = $this->getSerie_nfe_homologacao();
+    $data->numero_nfe_homologacao = $this->getNumero_nfe_homologacao();
+    $data->csc_homologacao = $this->getCsc_homologacao();
+    $data->csc_id_homologacao = $this->getCsc_id_homologacao();
 
     return $data;
   }
@@ -169,18 +187,21 @@ class CompanyModel extends Connection
   public function create($data)
   {
     $sql = "INSERT INTO {$this->table} (
-      cnpj, razao_social, nome_fantasia, telefone, email, cep, logradouro, numero, 
+      tpamb, cnpj, razao_social, nome_fantasia, telefone, email, cep, logradouro, numero, 
       bairro, cidade, uf, certificado, senha, csc, csc_id, serie_nfce, numero_nfce, 
-      serie_nfe, numero_nfe, codigo_municipio, codigo_uf, situacao_tributaria, inscricao_estadual
+      serie_nfe, numero_nfe, codigo_municipio, codigo_uf, situacao_tributaria, inscricao_estadual,
+      csc_homologacao, csc_id_homologacao, serie_nfce_homologacao, numero_nfce_homologacao, serie_nfe_homologacao, numero_nfe_homologacao
     ) 
     VALUES (
-      :cnpj, :razao_social, :nome_fantasia, :telefone, :email, :cep, :logradouro, :numero, 
+      :tpamb, :cnpj, :razao_social, :nome_fantasia, :telefone, :email, :cep, :logradouro, :numero, 
       :bairro, :cidade, :uf, :certificado, :senha, :csc, :csc_id, :serie_nfce, :numero_nfce, 
-      :serie_nfe, :numero_nfe, :codigo_municipio, :codigo_uf, :situacao_tributaria, :inscricao_estadual
+      :serie_nfe, :numero_nfe, :codigo_municipio, :codigo_uf, :situacao_tributaria, :inscricao_estadual,
+      :csc_homologacao, :csc_id_homologacao, :serie_nfce_homologacao, :numero_nfce_homologacao, :serie_nfe_homologacao, :numero_nfe_homologacao
     )";
 
     try {
       $stmt = $this->conn->prepare($sql);
+      $stmt->bindParam(':tpamb', $data['tpamb']);
       $stmt->bindParam(':cnpj', $data['cnpj']);
       $stmt->bindParam(':razao_social', $data['razao_social']);
       $stmt->bindParam(':nome_fantasia', $data['nome_fantasia']);
@@ -204,6 +225,12 @@ class CompanyModel extends Connection
       $stmt->bindParam(':codigo_uf', $data['codigo_uf']);
       $stmt->bindParam(':situacao_tributaria', $data['situacao_tributaria']);
       $stmt->bindParam(':inscricao_estadual', $data['inscricao_estadual']);
+      $stmt->bindParam(':csc_homologacao', $data['csc_homologacao']);
+      $stmt->bindParam(':csc_id_homologacao', $data['csc_id_homologacao']);
+      $stmt->bindParam(':serie_nfce_homologacao', $data['serie_nfce_homologacao']);
+      $stmt->bindParam(':numero_nfce_homologacao', $data['numero_nfce_homologacao']);
+      $stmt->bindParam(':serie_nfe_homologacao', $data['serie_nfe_homologacao']);
+      $stmt->bindParam(':numero_nfe_homologacao', $data['numero_nfe_homologacao']);
 
       $stmt->execute();
 
@@ -218,6 +245,7 @@ class CompanyModel extends Connection
   public function update($data)
   {
     $sql = "UPDATE {$this->table} SET 
+              tpamb = :tpamb,
               razao_social = :razao_social,
               nome_fantasia = :nome_fantasia,
               telefone = :telefone,
@@ -242,7 +270,13 @@ class CompanyModel extends Connection
               numero_nfe = :numero_nfe,
               codigo_municipio = :codigo_municipio,
               codigo_uf = :codigo_uf,
-              situacao_tributaria = :situacao_tributaria
+              situacao_tributaria = :situacao_tributaria,
+              serie_nfce_homologacao = :serie_nfce_homologacao,
+              numero_nfce_homologacao = :numero_nfce_homologacao,
+              serie_nfe_homologacao = :serie_nfe_homologacao,
+              numero_nfe_homologacao = :numero_nfe_homologacao,
+              csc_homologacao = :csc_homologacao,
+              csc_id_homologacao = :csc_id_homologacao
             WHERE id = :id";
 
 
@@ -252,6 +286,7 @@ class CompanyModel extends Connection
 
     try {
       $stmt = $this->conn->prepare($sql);
+      $stmt->bindParam(':tpamb', $this->tpamb);
       $stmt->bindParam(':razao_social', $this->razao_social);
       $stmt->bindParam(':nome_fantasia', $this->nome_fantasia);
       $stmt->bindParam(':telefone', $this->telefone);
@@ -277,6 +312,12 @@ class CompanyModel extends Connection
       $stmt->bindParam(':codigo_municipio', $this->codigo_municipio);
       $stmt->bindParam(':codigo_uf', $this->codigo_uf);
       $stmt->bindParam(':situacao_tributaria', $this->situacao_tributaria);
+      $stmt->bindParam(':serie_nfce_homologacao', $this->serie_nfce_homologacao);
+      $stmt->bindParam(':numero_nfce_homologacao', $this->numero_nfce_homologacao);
+      $stmt->bindParam(':serie_nfe_homologacao', $this->serie_nfe_homologacao);
+      $stmt->bindParam(':numero_nfe_homologacao', $this->numero_nfe_homologacao);
+      $stmt->bindParam(':csc_homologacao', $this->csc_homologacao);
+      $stmt->bindParam(':csc_id_homologacao', $this->csc_id_homologacao);
       $stmt->bindParam(':id', $this->id);
       $stmt->execute();
 
@@ -972,6 +1013,126 @@ class CompanyModel extends Connection
   public function setSituacao_tributaria($situacao_tributaria)
   {
     $this->situacao_tributaria = $situacao_tributaria;
+
+    return $this;
+  }
+
+  /**
+   * Get the value of serie_nfce_homologacao
+   */
+  public function getSerie_nfce_homologacao()
+  {
+    return $this->serie_nfce_homologacao;
+  }
+
+  /**
+   * Set the value of serie_nfce_homologacao
+   *
+   * @return  self
+   */
+  public function setSerie_nfce_homologacao($serie_nfce_homologacao)
+  {
+    $this->serie_nfce_homologacao = $serie_nfce_homologacao;
+
+    return $this;
+  }
+
+  /**
+   * Get the value of numero_nfce_homologacao
+   */
+  public function getNumero_nfce_homologacao()
+  {
+    return $this->numero_nfce_homologacao;
+  }
+
+  /**
+   * Set the value of numero_nfce_homologacao
+   *
+   * @return  self
+   */
+  public function setNumero_nfce_homologacao($numero_nfce_homologacao)
+  {
+    $this->numero_nfce_homologacao = $numero_nfce_homologacao;
+
+    return $this;
+  }
+
+  /**
+   * Get the value of serie_nfe_homologacao
+   */
+  public function getSerie_nfe_homologacao()
+  {
+    return $this->serie_nfe_homologacao;
+  }
+
+  /**
+   * Set the value of serie_nfe_homologacao
+   *
+   * @return  self
+   */
+  public function setSerie_nfe_homologacao($serie_nfe_homologacao)
+  {
+    $this->serie_nfe_homologacao = $serie_nfe_homologacao;
+
+    return $this;
+  }
+
+  /**
+   * Get the value of numero_nfe_homologacao
+   */
+  public function getNumero_nfe_homologacao()
+  {
+    return $this->numero_nfe_homologacao;
+  }
+
+  /**
+   * Set the value of numero_nfe_homologacao
+   *
+   * @return  self
+   */
+  public function setNumero_nfe_homologacao($numero_nfe_homologacao)
+  {
+    $this->numero_nfe_homologacao = $numero_nfe_homologacao;
+
+    return $this;
+  }
+
+  /**
+   * Get the value of csc_homologacao
+   */
+  public function getCsc_homologacao()
+  {
+    return $this->csc_homologacao;
+  }
+
+  /**
+   * Set the value of csc_homologacao
+   *
+   * @return  self
+   */
+  public function setCsc_homologacao($csc_homologacao)
+  {
+    $this->csc_homologacao = $csc_homologacao;
+
+    return $this;
+  }
+
+  /**
+   * Get the value of csc_id_homologacao
+   */
+  public function getCsc_id_homologacao()
+  {
+    return $this->csc_id_homologacao;
+  }
+
+  /**
+   * Set the value of csc_id_homologacao
+   *
+   * @return  self
+   */
+  public function setCsc_id_homologacao($csc_id_homologacao)
+  {
+    $this->csc_id_homologacao = $csc_id_homologacao;
 
     return $this;
   }
