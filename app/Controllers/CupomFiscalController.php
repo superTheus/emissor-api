@@ -186,38 +186,30 @@ class CupomFiscalController extends Connection
       $emissao = $emissoesModel->getCurrent();
 
       $this->tools = new Tools(json_encode($this->config), Certificate::readPfx($this->certificado, $this->company->getSenha()));
+      $this->tools->model($this->mod);
 
       $response = $this->tools->sefazCancela($emissao->chave, $data['justificativa'], $emissao->protocolo, 2);
       $stdCl = new Standardize();
       $std = $stdCl->toStd($response);
 
       if ($std->cStat == 128) {
-        foreach ($std->retEvento as $evento) {
-          if ($evento->infEvento->cStat == 135) {
-            $protocolo = $evento->infEvento->nProt;
-            echo "Cancelamento homologado com sucesso! Protocolo: " . $protocolo;
-
-            http_response_code(200);
-            echo json_encode([
-              "status" => "success",
-              "message" => "Cancelamento homologado com sucesso!",
-              "protocolo" => $protocolo
-            ]);
-          } else {
-            // Cancelamento rejeitado
-            echo "Erro ao cancelar: " . $evento->infEvento->xMotivo;
-
-            http_response_code(500);
-            echo json_encode([
-              "status" => "error",
-              "message" => "Erro ao cancelar: " . $evento->infEvento->xMotivo
-            ]);
-          }
-        }
+        http_response_code(200);
+        echo json_encode([
+          "status" => "success",
+          "message" => "Cancelamento homologado com sucesso!"
+        ]);
       } else if ($std->cStat == 135) {
-        echo "Cancelamento realizado com sucesso!";
+        http_response_code(200);
+        echo json_encode([
+          "status" => "success",
+          "message" => "Cancelamento homologado com sucesso!"
+        ]);
       } else {
-        echo "Erro ao cancelar: " . $std->xMotivo;
+        http_response_code(403);
+        echo json_encode([
+          "status" => "error",
+          "message" => "Erro ao cancelar: " . $std->xMotivo
+        ]);
       }
     } catch (\Exception $e) {
       http_response_code(500);
@@ -678,8 +670,8 @@ class CupomFiscalController extends Connection
       "chave" => $this->currentChave,
       "avisos" => $this->warnings,
       "protocolo" => $this->numeroProtocolo,
-      "link" => "https://estoqpremium.com.br/emissor_api/" . $link,
-      // "link" => "http://localhost/emissor-api/" . $link,
+      // "link" => "https://estoqpremium.com.br/emissor_api/" . $link,
+      "link" => "http://localhost/emissor-api/" . $link,
       "xml" => $this->currentXML,
       "pdf" => base64_encode($this->currentPDF)
     ]);

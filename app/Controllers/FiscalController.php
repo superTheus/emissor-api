@@ -194,32 +194,23 @@ class FiscalController extends Connection
       $std = $stdCl->toStd($response);
 
       if ($std->cStat == 128) {
-        foreach ($std->retEvento as $evento) {
-          if ($evento->infEvento->cStat == 135) {
-            $protocolo = $evento->infEvento->nProt;
-            echo "Cancelamento homologado com sucesso! Protocolo: " . $protocolo;
-
-            http_response_code(200);
-            echo json_encode([
-              "status" => "success",
-              "message" => "Cancelamento homologado com sucesso!",
-              "protocolo" => $protocolo
-            ]);
-          } else {
-            // Cancelamento rejeitado
-            echo "Erro ao cancelar: " . $evento->infEvento->xMotivo;
-
-            http_response_code(500);
-            echo json_encode([
-              "status" => "error",
-              "message" => "Erro ao cancelar: " . $evento->infEvento->xMotivo
-            ]);
-          }
-        }
+        http_response_code(200);
+        echo json_encode([
+          "status" => "success",
+          "message" => "Cancelamento homologado com sucesso!"
+        ]);
       } else if ($std->cStat == 135) {
-        echo "Cancelamento realizado com sucesso!";
+        http_response_code(200);
+        echo json_encode([
+          "status" => "success",
+          "message" => "Cancelamento homologado com sucesso!"
+        ]);
       } else {
-        echo "Erro ao cancelar: " . $std->xMotivo;
+        http_response_code(403);
+        echo json_encode([
+          "status" => "error",
+          "message" => "Erro ao cancelar: " . $std->xMotivo
+        ]);
       }
     } catch (\Exception $e) {
       http_response_code(500);
@@ -240,7 +231,12 @@ class FiscalController extends Connection
 
     $response = $this->tools->sefazCCe($chaveNFe, $correcao, $grupoCorrecao);
 
-    var_dump($response);
+    http_response_code(200);
+    echo json_encode([
+      "status" => "success",
+      "message" => "Carta de correção gerada com sucesso!",
+      "response" => $response
+    ]);
   }
 
   private function setConfig()
@@ -361,7 +357,7 @@ class FiscalController extends Connection
     $std->cMun = $endereco['codigo_municipio'];
     $std->xMun = $endereco['municipio'];
     $std->UF = $endereco['uf'];
-    $std->CEP = UtilsController::soNumero($endereco['uf']);
+    $std->CEP = UtilsController::soNumero($endereco['cep']);
     $std->cPais = '1058';
     $std->xPais = 'BRASIL';
 
@@ -715,8 +711,8 @@ class FiscalController extends Connection
       "chave" => $this->currentChave,
       "avisos" => $this->warnings,
       "protocolo" => $this->numeroProtocolo,
-      "link" => "https://estoqpremium.com.br/emissor_api/" . $link,
-      // "link" => "http://localhost/emissor-api/" . $link,
+      // "link" => "https://estoqpremium.com.br/emissor_api/" . $link,
+      "link" => "http://localhost/emissor-api/" . $link,
       "xml" => $this->currentXML,
       "pdf" => base64_encode($this->currentPDF)
     ]);

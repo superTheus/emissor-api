@@ -85,6 +85,12 @@ class Routers
           $cupomfiscalController = new CupomFiscalController();
           $cupomfiscalController->cancelNfce($data);
         });
+
+        $router->post('/carta', function () {
+          $data = json_decode(file_get_contents('php://input'), true);
+          $fiscalController = new FiscalController($data);
+          $fiscalController->gerarCC($data);
+        });
       });
 
       $router->mount('/nfce', function () use ($router) {
@@ -96,7 +102,7 @@ class Routers
 
         $router->post('/cancel', function () {
           $data = json_decode(file_get_contents('php://input'), true);
-          $cupomfiscalController = new CupomFiscalController();
+          $cupomfiscalController = new CupomFiscalController($data);
           $cupomfiscalController->cancelNfce($data);
         });
       });
@@ -121,18 +127,6 @@ class Routers
 
         $router->get('/test/{cnpj}', function ($cnpj) {
           UtilsController::testCertificate($cnpj);
-        });
-      });
-
-      $router->mount('/carta', function () use ($router) {
-        $router->get('/', function () {
-          echo 'Carta';
-        });
-
-        $router->post('/', function () {
-          $data = json_decode(file_get_contents('php://input'), true);
-          $fiscalController = new FiscalController($data);
-          $fiscalController->gerarCC($data);
         });
       });
     });
