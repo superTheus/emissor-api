@@ -158,7 +158,12 @@ class CupomFiscalController extends Connection
       $this->analisaRetorno($std);
     } catch (\Exception $e) {
       http_response_code(500);
-      echo json_encode(['error' => $e->getMessage(), "error_tags" => $this->nfe->getErrors()]);
+      echo json_encode([
+        'error' => $e->getMessage(),
+        "error_tags" => $this->nfe->getErrors(),
+        "xml" => $this->currentXML,
+        "csc" => $this->csc,
+      ]);
     }
   }
 
@@ -213,7 +218,11 @@ class CupomFiscalController extends Connection
       }
     } catch (\Exception $e) {
       http_response_code(500);
-      echo json_encode(['error' => $e->getMessage()]);
+      echo json_encode([
+        'error' => $e->getMessage(),
+        "xml" => $this->currentXML,
+        "csc" => $this->csc,
+      ]);
     }
   }
 
@@ -605,14 +614,19 @@ class CupomFiscalController extends Connection
           default:
             http_response_code(403);
             echo json_encode([
-              "error" => $std->xMotivo
+              "error" => $std->xMotivo,
+              "xml" => $this->currentXML,
+              "csc" => $this->csc,
             ]);
             break;
         }
       }
     } catch (\Exception $e) {
       http_response_code(500);
-      echo json_encode(['error' => $e->getMessage()]);
+      echo json_encode([
+        'error' => $e->getMessage(),
+        "xml" => $this->currentXML
+      ]);
     }
   }
 

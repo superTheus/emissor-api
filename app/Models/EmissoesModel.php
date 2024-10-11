@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Controllers\UtilsController;
 use App\Models\Connection;
 use stdClass;
 
@@ -87,6 +88,11 @@ class EmissoesModel extends Connection
       $stmt = $this->conn->prepare($sql);
 
       foreach ($filter as $key => $value) {
+
+        if ($key == 'empresa') {
+          $value = UtilsController::soNumero($value);
+        }
+
         $stmt->bindParam(":$key", $value);
       }
 
