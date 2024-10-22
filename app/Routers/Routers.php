@@ -82,8 +82,8 @@ class Routers
 
         $router->post('/cancel', function () {
           $data = json_decode(file_get_contents('php://input'), true);
-          $cupomfiscalController = new CupomFiscalController();
-          $cupomfiscalController->cancelNfce($data);
+          $cupomfiscalController = new FiscalController();
+          $cupomfiscalController->cancelNfe($data);
         });
 
         $router->post('/carta', function () {

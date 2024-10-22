@@ -164,7 +164,7 @@ class FiscalController extends Connection
     }
   }
 
-  public function cancelNfce($data)
+  public function cancelNfe($data)
   {
     try {
       $companyModel = new CompanyModel();
@@ -182,6 +182,7 @@ class FiscalController extends Connection
 
       $this->company = new CompanyModel($company[0]['id']);
       $this->certificado = UtilsController::getCertifcado($this->company->getCertificado());
+      $this->ambiente = intval($this->company->getTpamb()) > 0 ? $this->company->getTpamb() : 1;
       $this->config = $this->setConfig();
 
       $emissoesModel = new EmissoesModel($data['chave']);
@@ -711,8 +712,8 @@ class FiscalController extends Connection
       "chave" => $this->currentChave,
       "avisos" => $this->warnings,
       "protocolo" => $this->numeroProtocolo,
-      // "link" => "https://estoqpremium.com.br/emissor_api/" . $link,
-      "link" => "http://localhost/emissor-api/" . $link,
+      "link" => "https://estoqpremium.com.br/emissor_api/" . $link,
+      // "link" => "http://localhost/emissor-api/" . $link,
       "xml" => $this->currentXML,
       "pdf" => base64_encode($this->currentPDF)
     ]);
