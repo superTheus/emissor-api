@@ -2,13 +2,9 @@
 
 namespace App\Models;
 
+use Dotenv\Dotenv;
 use PDO;
 use PDOException;
-
-define("SERVER",    "localhost");
-define("DATABASE", "emissor_api");
-define("USER",     "root");
-define("PASSWORD",       "");
 
 class Connection
 {
@@ -16,8 +12,11 @@ class Connection
 
   public function openConnection()
   {
+    $dotenv = Dotenv::createImmutable(dirname(__DIR__, 2));
+    $dotenv->load();
+
     try {
-      $this->connection = new PDO("mysql:host=" . SERVER . ";dbname=" . DATABASE . ";charset=utf8", USER, PASSWORD);
+      $this->connection = new PDO("mysql:host=" . $_ENV['DB_SERVER'] . ";dbname=" . $_ENV['DB_NAME'] . ";charset=utf8", $_ENV['DB_USER'], $_ENV['DB_PASS']);
 
       //             Mostra erros de PDO
       $this->connection->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
