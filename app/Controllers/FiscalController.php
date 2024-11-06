@@ -6,6 +6,7 @@ use App\Models\CompanyModel;
 use App\Models\Connection;
 use App\Models\EmissoesModel;
 use App\Models\FormaPagamentoModel;
+use Dotenv\Dotenv;
 use NFePHP\Common\Certificate;
 use NFePHP\Common\Keys;
 use NFePHP\DA\NFe\Danfe;
@@ -50,6 +51,9 @@ class FiscalController extends Connection
 
   public function __construct($data = null)
   {
+    $dotenv = Dotenv::createImmutable(dirname(__DIR__, 2));
+    $dotenv->load();
+
     if ($data) {
       $this->nfe = new Make();
       $this->data = $data;
@@ -190,7 +194,7 @@ class FiscalController extends Connection
 
       $this->tools = new Tools(json_encode($this->config), Certificate::readPfx($this->certificado, $this->company->getSenha()));
 
-      $response = $this->tools->sefazCancela($emissao->chave, $data['justificativa'], $emissao->protocolo, 2);
+      $response = $this->tools->sefazCancela($emissao->chave, $data['justificativa'], $emissao->protocolo);
       $stdCl = new Standardize();
       $std = $stdCl->toStd($response);
 
@@ -712,8 +716,7 @@ class FiscalController extends Connection
       "chave" => $this->currentChave,
       "avisos" => $this->warnings,
       "protocolo" => $this->numeroProtocolo,
-      "link" => "https://estoqpremium.com.br/emissor_api/" . $link,
-      // "link" => "http://localhost/emissor-api/" . $link,
+      "link" => $_ENV['URL_BASE'] . $link,
       "xml" => $this->currentXML,
       "pdf" => base64_encode($this->currentPDF)
     ]);

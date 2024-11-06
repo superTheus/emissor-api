@@ -74,6 +74,10 @@ class Routers
       });
 
       $router->mount('/nfe', function () use ($router) {
+        $router->get('/', function () {
+          echo "Emitir NFe";
+        });
+
         $router->post('/', function () {
           $data = json_decode(file_get_contents('php://input'), true);
           $fiscalController = new FiscalController($data);
