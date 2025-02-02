@@ -531,9 +531,15 @@ class CupomFiscalController extends Connection
   private function generatePagamentoData($pagamento)
   {
     $std            = new stdClass();
-    $std->indPag = isset($pagamento['indPag']) ? $pagamento['indPag'] : 0;
+    $std->indPag    = isset($pagamento['indPag']) ? $pagamento['indPag'] : 0;
     $std->tPag      = STR_PAD($pagamento['tPag'], 2, '0', STR_PAD_LEFT);
     $std->vPag      = number_format($pagamento['valorpago'], 2, ".", "");
+    if (in_array($std->tPag, ['03', '04'])) {
+      $std->tpIntegra   = 2;
+      $std->CNPJPag        = "00000000000191";
+      $std->tBand       = "99";
+      $std->cAut        = "000000";
+    }
 
     return $std;
   }
