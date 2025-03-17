@@ -705,7 +705,7 @@ class CupomFiscalController extends Connection
     $newEmissao = new EmissoesModel();
 
     $newEmissao->setChave($this->currentChave);
-    $newEmissao->setNumero($this->company->getNumero_nfce());
+    $newEmissao->setNumero($this->numero);
     $newEmissao->setSerie($this->serie);
     $newEmissao->setEmpresa($this->company->getCnpj());
     $newEmissao->setXml($this->currentXML);
