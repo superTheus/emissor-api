@@ -143,7 +143,7 @@ class FiscalController extends Connection
       }
 
       $this->nfe->tagICMSTot($this->generateIcmsTot());
-      $this->nfe->taginfAdic($this->generateIcmsInfo());
+      $this->nfe->taginfAdic($this->generateIcmsInfo($this->data));
       $this->nfe->taginfRespTec($this->generateReponsavelTecnicp());
       $this->nfe->tagtransp($this->generateFreteData());
       $this->nfe->tagpag($this->generateFaturaData());
@@ -164,7 +164,10 @@ class FiscalController extends Connection
       $this->analisaRetorno($std);
     } catch (\Exception $e) {
       http_response_code(500);
-      echo json_encode(['error' => $e->getMessage(), "error_tags" => $this->nfe->getErrors()]);
+      echo json_encode([
+        'error' => $e->getMessage(), 
+        "error_tags" => $this->nfe->getErrors()
+      ]);
     }
   }
 
@@ -288,7 +291,7 @@ class FiscalController extends Connection
     $std->cDV = mb_substr($this->currentChave, -1);
     $std->tpAmb = $this->ambiente;
     $std->finNFe = 1;
-    $std->indFinal = 1;
+    $std->indFinal = isset($data['consumidor_final']) && $data['consumidor_final'] === 'S'  ? 1 : 0;
     $std->indPres = 1; // Indica operação presencial
     $std->procEmi   = 0;
     $std->verProc = 1;
@@ -340,6 +343,20 @@ class FiscalController extends Connection
           $std->CPF = UtilsController::soNumero($cliente['documento']);
         } else {
           $std->CNPJ = UtilsController::soNumero($cliente['documento']);
+
+          if(isset($cliente['tipo_icms'])) {
+            if ($cliente['tipo_icms'] == "1") {
+              $std->IE = $cliente['inscricao_estadual'];
+              $std->indIEDest = 1;
+            } else if ($cliente['tipo_icms'] == "2") {
+              $std->indIEDest = 2;
+            } else if ($cliente['tipo_icms'] == "9") {
+              $std->indIEDest = 9;
+            }
+          } else {
+            $std->indIEDest = 9;
+          }
+
         }
       } else {
         $std->xNome = "Consumidor Final";
@@ -539,11 +556,11 @@ class FiscalController extends Connection
     return $std;
   }
 
-  private function generateIcmsInfo()
+  private function generateIcmsInfo($data)
   {
     $std             = new stdClass();
     $std->infAdFisco = '';
-    $std->infCpl     = '';
+    $std->infCpl     = isset($danta['observacao']) ? $data['observacao'] : '';
 
     return $std;
   }
@@ -654,7 +671,9 @@ class FiscalController extends Connection
           default:
             http_response_code(403);
             echo json_encode([
-              "error" => $std->xMotivo
+              "código" => $std->cStat,
+              "error" => $std->xMotivo,
+              "xml" => $this->currentXML
             ]);
             break;
         }
