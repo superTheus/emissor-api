@@ -560,7 +560,7 @@ class FiscalController extends Connection
   {
     $std             = new stdClass();
     $std->infAdFisco = '';
-    $std->infCpl     = isset($danta['observacao']) ? $data['observacao'] : '';
+    $std->infCpl     = isset($data['observacao']) ? $data['observacao'] : '';
 
     return $std;
   }
