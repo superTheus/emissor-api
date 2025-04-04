@@ -286,9 +286,9 @@ class FiscalController extends Connection
     $std->indPag = 0;
     $std->dhSaiEnt = null;
     $std->tpNF = UtilsController::verificarOperacaoPorCFOP($data['cfop']);
-    $std->idDest = 1;
+    $std->idDest = strtoupper($ufCliente) === strtoupper($this->company->getUf()) ? 1 : 2;
     $std->cMunFG = $this->company->getCodigo_municipio();
-    $std->tpImp = strtoupper($ufCliente) === strtoupper($this->company->getUf()) ? 1 : 2;
+    $std->tpImp = 1;
     $std->tpEmis = $this->modo_emissao;
     $std->cDV = mb_substr($this->currentChave, -1);
     $std->tpAmb = $this->ambiente;
