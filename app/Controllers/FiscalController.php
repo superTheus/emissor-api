@@ -273,6 +273,8 @@ class FiscalController extends Connection
 
   private function generateIdeData($data)
   {
+    $ufCliente = $data['cliente']['endereco']['uf'];
+
     $std = new stdClass();
     $std->cUF = $this->company->getCodigo_uf();
     $std->cNF = str_pad((date('Y') . 100), 8, '0', STR_PAD_LEFT);
@@ -286,7 +288,7 @@ class FiscalController extends Connection
     $std->tpNF = UtilsController::verificarOperacaoPorCFOP($data['cfop']);
     $std->idDest = 1;
     $std->cMunFG = $this->company->getCodigo_municipio();
-    $std->tpImp = 1;
+    $std->tpImp = strtoupper($ufCliente) === strtoupper($this->company->getUf()) ? 1 : 2;
     $std->tpEmis = $this->modo_emissao;
     $std->cDV = mb_substr($this->currentChave, -1);
     $std->tpAmb = $this->ambiente;
@@ -344,9 +346,12 @@ class FiscalController extends Connection
         } else {
           $std->CNPJ = UtilsController::soNumero($cliente['documento']);
 
+          if (isset($cliente['inscricao_estadual'])) {
+            $std->IE = $cliente['inscricao_estadual'];
+          }
+
           if(isset($cliente['tipo_icms'])) {
             if ($cliente['tipo_icms'] == "1") {
-              $std->IE = $cliente['inscricao_estadual'];
               $std->indIEDest = 1;
             } else if ($cliente['tipo_icms'] == "2") {
               $std->indIEDest = 2;
