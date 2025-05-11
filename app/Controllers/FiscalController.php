@@ -37,6 +37,7 @@ class FiscalController extends Connection
   private $produtos = [];
   private $pagamentos = [];
   private $baseCalculo = 0;
+  private $origem = 0;
   private $totalIcms = 0;
   private $valorIcms = 0;
   private $data;
@@ -46,8 +47,6 @@ class FiscalController extends Connection
   private $warnings = [];
   private $response;
   private $mod = 55;
-  private $percentual_cofins = 0.65;
-  private $percentual_pis = 3;
 
   public function __construct($data = null)
   {
@@ -121,6 +120,7 @@ class FiscalController extends Connection
 
       foreach ($this->produtos as $index => $produto) {
         $this->baseCalculo = ($produto['total'] - $produto['desconto'] + $produto['frete'] + $produto['acrescimo']);
+        $this->origem = $produto['origem'];
         $this->valorIcms = 0;
 
         $this->nfe->tagprod($this->generateProductData($produto, $index + 1));
@@ -129,17 +129,30 @@ class FiscalController extends Connection
           $this->nfe->taginfAdProd($this->generateProdutoInfoAdicional($produto, $index + 1));
         }
 
-        if (isset($produto['codigo_anp']) && !empty($produto['codigo_anp'])) {
+        $this->nfe->tagimposto($this->generateImpostoData($produto, $index + 1));
+
+        if(isset($produto['icms'])) {
+          $this->nfe->tagICMS($this->generateICMSData($produto['icms'], $index + 1));
+        } else if (isset($produto['codigo_anp']) && !empty($produto['codigo_anp'])) {
           $this->nfe->tagcomb($this->addCombustivelTag($produto, $index));
           $this->nfe->tagICMS($this->addICMSCombTag($produto, $index));
         } else {
           $this->nfe->tagICMSSN($this->generateIcmssnData($produto, $index + 1));
         }
 
-        $this->nfe->tagimposto($this->generateImpostoData($produto, $index + 1));
+        if(isset($produto['ipi'])) {
+          $this->nfe->tagIPI($this->generateIPIData($produto['ipi'], $index + 1));
+        }
+
+        if (isset($produto['pis'])) {
+          $this->nfe->tagPIS($this->generatePisData($produto['pis'], $index + 1));
+        }
+
+        if (isset($produto['cofins'])) {
+          $this->nfe->tagCOFINS($this->generateConfinsData($produto['cofins'], $index + 1));
+        }
+
         $this->totalIcms += number_format($this->valorIcms, 2, ".", "");
-        $this->nfe->tagPIS($this->generatePisData($produto, $index + 1));
-        $this->nfe->tagCOFINS($this->generateConfinsData($produto, $index + 1));
       }
 
       $this->nfe->tagICMSTot($this->generateIcmsTot());
@@ -310,7 +323,7 @@ class FiscalController extends Connection
     $std->xFant = $this->company->getNome_fantasia();
     $std->IE = $this->company->getInscricao_estadual();
     $std->CNAE = $this->company->getCnae();
-    $std->CRT = 1;
+    $std->CRT = $this->company->getCrt();
     $std->CNPJ = $this->company->getCnpj();
 
     return $std;
@@ -488,6 +501,50 @@ class FiscalController extends Connection
     return $std;
   }
 
+  private function generateICMSData($produto, $item)
+  {
+    $std = new stdClass();
+
+    $percentual_icsm =  floatval($produto['aliquota_icms']);
+    $valorIcms = $this->baseCalculo * ($percentual_icsm / 100);
+
+    $std->item = $item;
+    $std->orig = $this->origem;
+
+    if ($this->company->getCRT() == 1) {
+      $std->CSOSN = $produto['csosn'] ?? '102';
+    } else {
+      $std->CST = $produto['cst'];
+    }
+
+    $std->vBC = number_format($this->baseCalculo, 2, ".", "");
+    $std->modBC = $produto['mod_bc'] ?? 0;
+    $std->pICMS = number_format($percentual_icsm, 4, ".", "");
+    $std->vICMS = number_format($valorIcms, 2, ".", "");
+    
+    $this->valorIcms += $valorIcms;
+
+    return $std;
+  }
+
+  private function generateIPIData($produto, $item)
+  {
+    // die(json_encode($produto));
+    $percentual_ipi =  floatval($produto['aliquota_ipi']);
+    $valorIpi = $this->baseCalculo * ($percentual_ipi / 100);
+
+    $std = new stdClass();
+    $std->item = $item;
+    $std->CST = $produto['cst'];
+    $std->cEnq = $produto['enquadramento_legal_ipi'];
+    $std->vBC = number_format($this->baseCalculo, 2, ".", "");
+    $std->pIPI = number_format($percentual_ipi, 4, ".", "");
+    $std->vIPI = number_format($valorIpi, 2, ".", "");
+
+    return $std;
+  }
+
+
   private function generateIcmssnData($produto, $item)
   {
     $std = new stdClass();
@@ -521,24 +578,30 @@ class FiscalController extends Connection
 
   private function generatePisData($produto, $item)
   {
+    $percentual_pis =  floatval($produto['aliquota_pis']);
+    $valorPis = $this->baseCalculo * ($percentual_pis / 100);
+
     $std = new stdClass();
     $std->item      = $item;
-    $std->CST       = '06';
-    $std->vBC       = number_format($produto['total'], 2, ".", "");
-    $std->pPIS      = number_format($this->percentual_pis, 2, ".", "");
-    $std->vPIS      = number_format((floatval($produto['total']) * ($this->percentual_pis / 100)), 2, ".", "");
+    $std->CST       = $produto['cst'];
+    $std->vBC       = number_format($this->baseCalculo, 2, ".", "");
+    $std->pPIS      = number_format($percentual_pis, 4, ".", "");
+    $std->vPIS      = number_format($valorPis, 2, ".", "");
 
     return $std;
   }
 
   private function generateConfinsData($produto, $item)
   {
+    $percentual_cofins =  floatval($produto['aliquota_cofins']);
+    $valorCofins = $this->baseCalculo * ($percentual_cofins / 100);
+
     $std = new stdClass();
     $std->item      = $item;
-    $std->CST       = '06';
-    $std->vBC       = number_format($produto['total'], 2, ".", "");
-    $std->pCOFINS   = number_format($this->percentual_cofins, 2, ".", "");
-    $std->vCOFINS   = number_format((floatval($produto['total']) * ($this->percentual_cofins / 100)), 2, ".", "");
+    $std->CST       = $produto['cst'];
+    $std->vBC       = number_format($this->baseCalculo, 2, ".", "");
+    $std->pCOFINS = number_format($percentual_cofins, 4, ".", "");
+    $std->vCOFINS = number_format($valorCofins, 2, ".", "");
 
     return $std;
   }
@@ -546,17 +609,26 @@ class FiscalController extends Connection
   private function generateIcmsTot()
   {
     $std = new stdClass();
-    $std->vBC = number_format(0, 2, ".", "");
-    $std->vICMS = number_format($this->totalIcms, 2, ".", "");
-    $std->vICMSDeson = 0000.00;
-    $std->vFCP       = 0000.00;
-    $std->vBCST      = 0000.00;
-    $std->vST        = 0000.00;
-    $std->vFCPST     = 0000.00;
-    $std->vFCPSTRet  = 0000.00;
-    $std->vProd = $this->total_produtos;
-    $std->vNF = $this->total_produtos;
-    $std->vTotTrib = 0;
+    $std->vBC = number_format($this->baseCalculo, 2, ".", ""); // Soma da base de cálculo do ICMS
+    $std->vICMS = number_format($this->valorIcms, 2, ".", ""); // Soma do valor do ICMS
+    $std->vICMSDeson = 0.00;
+    $std->vFCP = 0.00;
+    $std->vBCST = 0.00;
+    $std->vST = 0.00;
+    $std->vFCPST = 0.00;
+    $std->vFCPSTRet = 0.00;
+    $std->vProd = number_format($this->total_produtos, 2, ".", ""); // Soma do valor total dos produtos
+    $std->vFrete = 0.00;
+    $std->vSeg = 0.00;
+    $std->vDesc = 0.00;
+    $std->vII = 0.00;
+    $std->vIPI = 0.00;
+    $std->vIPIDevol = 0.00;
+    $std->vPIS = 0.00;
+    $std->vCOFINS = 0.00;
+    $std->vOutro = 0.00;
+    $std->vNF = number_format($this->total_produtos, 2, ".", ""); // Valor total da nota fiscal
+    $std->vTotTrib = 0.00;
 
     return $std;
   }
