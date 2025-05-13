@@ -130,26 +130,33 @@ class FiscalController extends Connection
         }
 
         $this->nfe->tagimposto($this->generateImpostoData($produto, $index + 1));
+        
+        if ($this->company->getCrt() == "3") {
+          if (isset($produto['icms'])) {
+            $this->nfe->tagICMS($this->generateICMSData($produto['icms'], $index + 1));
+          } else if (isset($produto['codigo_anp']) && !empty($produto['codigo_anp'])) {
+            $this->nfe->tagcomb($this->addCombustivelTag($produto, $index));
+            $this->nfe->tagICMS($this->addICMSCombTag($produto, $index));
+          } else {
+            $this->nfe->tagICMSSN($this->generateIcmssnData($produto, $index + 1));
+          }
 
-        if(isset($produto['icms'])) {
-          $this->nfe->tagICMS($this->generateICMSData($produto['icms'], $index + 1));
-        } else if (isset($produto['codigo_anp']) && !empty($produto['codigo_anp'])) {
-          $this->nfe->tagcomb($this->addCombustivelTag($produto, $index));
-          $this->nfe->tagICMS($this->addICMSCombTag($produto, $index));
+          if (isset($produto['ipi'])) {
+            $this->nfe->tagIPI($this->generateIPIData($produto['ipi'], $index + 1));
+          }
+
+          if (isset($produto['pis'])) {
+            $this->nfe->tagPIS($this->generatePisData($produto['pis'], $index + 1));
+          }
+
+          if (isset($produto['cofins'])) {
+            $this->nfe->tagCOFINS($this->generateConfinsData($produto['cofins'], $index + 1));
+          }
         } else {
           $this->nfe->tagICMSSN($this->generateIcmssnData($produto, $index + 1));
-        }
-
-        if(isset($produto['ipi'])) {
-          $this->nfe->tagIPI($this->generateIPIData($produto['ipi'], $index + 1));
-        }
-
-        if (isset($produto['pis'])) {
-          $this->nfe->tagPIS($this->generatePisData($produto['pis'], $index + 1));
-        }
-
-        if (isset($produto['cofins'])) {
-          $this->nfe->tagCOFINS($this->generateConfinsData($produto['cofins'], $index + 1));
+          $this->totalIcms += number_format($this->valorIcms, 2, ".", "");
+          $this->nfe->tagPIS($this->generatePisDataSimple($produto, $index + 1));
+          $this->nfe->tagCOFINS($this->generateConfinsDataSimple($produto, $index + 1));
         }
 
         $this->totalIcms += number_format($this->valorIcms, 2, ".", "");
@@ -178,10 +185,35 @@ class FiscalController extends Connection
     } catch (\Exception $e) {
       http_response_code(500);
       echo json_encode([
-        'error' => $e->getMessage(), 
-        "error_tags" => $this->nfe->getErrors()
+        'error' => $e->getMessage(),
+        "error_tags" => $this->nfe->getErrors(),
+        "error_xml" => $this->nfe->getXML()
       ]);
     }
+  }
+
+  private function generatePisDataSimple($produto, $item)
+  {
+    $std = new stdClass();
+    $std->item = $item;
+    $std->CST = '06';
+    $std->vBC = number_format($produto['total'], 2, ".", "");
+    $std->pPIS = number_format(0, 2, ".", "");
+    $std->vPIS = number_format((floatval($produto['total']) * (0 / 100)), 2, ".", "");
+
+    return $std;
+  }
+
+  private function generateConfinsDataSimple($produto, $item)
+  {
+    $std = new stdClass();
+    $std->item = $item;
+    $std->CST = '06';
+    $std->vBC = number_format($produto['total'], 2, ".", "");
+    $std->pCOFINS = number_format(0, 2, ".", "");
+    $std->vCOFINS = number_format((floatval($produto['total']) * (0 / 100)), 2, ".", "");
+
+    return $std;
   }
 
   public function cancelNfe($data)
@@ -363,7 +395,7 @@ class FiscalController extends Connection
             $std->IE = $cliente['inscricao_estadual'];
           }
 
-          if(isset($cliente['tipo_icms'])) {
+          if (isset($cliente['tipo_icms'])) {
             if ($cliente['tipo_icms'] == "1") {
               $std->indIEDest = 1;
             } else if ($cliente['tipo_icms'] == "2") {
@@ -374,7 +406,6 @@ class FiscalController extends Connection
           } else {
             $std->indIEDest = 9;
           }
-
         }
       } else {
         $std->xNome = "Consumidor Final";
@@ -521,7 +552,7 @@ class FiscalController extends Connection
     $std->modBC = $produto['mod_bc'] ?? 0;
     $std->pICMS = number_format($percentual_icsm, 4, ".", "");
     $std->vICMS = number_format($valorIcms, 2, ".", "");
-    
+
     $this->valorIcms += $valorIcms;
 
     return $std;
