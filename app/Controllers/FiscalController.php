@@ -37,6 +37,7 @@ class FiscalController extends Connection
   private $produtos = [];
   private $pagamentos = [];
   private $baseCalculo = 0;
+  private $baseTotalIcms = 0; // Nova variável para soma da base de cálculo
   private $origem = 0;
   private $totalIcms = 0;
   private $valorIcms = 0;
@@ -118,6 +119,10 @@ class FiscalController extends Connection
       $this->nfe->tagdest($this->generateClientData($this->data));
       $this->nfe->tagenderDest($this->generateClientAddressData($this->data['cliente']['endereco']));
 
+      $this->baseTotalIcms = 0;
+      $this->totalIcms = 0;
+      $this->total_produtos = 0;
+
       foreach ($this->produtos as $index => $produto) {
         $this->baseCalculo = ($produto['total'] - $produto['desconto'] + $produto['frete'] + $produto['acrescimo']);
         $this->origem = $produto['origem'];
@@ -134,11 +139,21 @@ class FiscalController extends Connection
         if ($this->company->getCrt() == "3") {
           if (isset($produto['icms'])) {
             $this->nfe->tagICMS($this->generateICMSData($produto['icms'], $index + 1));
-          } else if (isset($produto['codigo_anp']) && !empty($produto['codigo_anp'])) {
+            $this->baseTotalIcms += $this->baseCalculo;
+          }
+          
+          if (isset($produto['codigo_anp']) && !empty($produto['codigo_anp'])) {
             $this->nfe->tagcomb($this->addCombustivelTag($produto, $index));
             $this->nfe->tagICMS($this->addICMSCombTag($produto, $index));
+            $this->baseTotalIcms += 1000.00;
           } else {
-            $this->nfe->tagICMSSN($this->generateIcmssnData($produto, $index + 1));
+            $std = new stdClass();
+            $std->item = $index + 1;
+            $std->orig = $produto['origem'] ?? 0;
+            $std->CST = '40';
+            $std->vICMSDeson = 0.00;
+            $std->motDesICMS = 9; // Outros
+            $this->nfe->tagICMS($std);
           }
 
           if (isset($produto['ipi'])) {
@@ -153,8 +168,19 @@ class FiscalController extends Connection
             $this->nfe->tagCOFINS($this->generateConfinsData($produto['cofins'], $index + 1));
           }
         } else {
-          $this->nfe->tagICMSSN($this->generateIcmssnData($produto, $index + 1));
-          $this->totalIcms += number_format($this->valorIcms, 2, ".", "");
+          $icmssnData = $this->generateIcmssnData($produto, $index + 1);
+
+          if (isset($produto['codigo_anp']) && !empty($produto['codigo_anp'])) {
+            $this->nfe->tagcomb($this->addCombustivelTag($produto, $index));
+            $this->nfe->tagICMS($this->addICMSCombTag($produto, $index));
+            $this->baseTotalIcms += 1000.00;
+          } else {
+            $this->nfe->tagICMSSN($icmssnData);
+            if (in_array($icmssnData->CSOSN, ['201', '202', '203', '900']) && isset($icmssnData->vBC)) {
+              $this->baseTotalIcms += $icmssnData->vBC;
+            }
+          }
+          
           $this->nfe->tagPIS($this->generatePisDataSimple($produto, $index + 1));
           $this->nfe->tagCOFINS($this->generateConfinsDataSimple($produto, $index + 1));
         }
@@ -176,7 +202,7 @@ class FiscalController extends Connection
       $this->currentXML = $this->nfe->getXML();
       $this->currentXML = $this->tools->signNFe($this->currentXML);
 
-      $this->response = $this->tools->sefazEnviaLote([$this->currentXML], str_pad(1, 15, '0', STR_PAD_LEFT));
+      $this->response = $this->tools->sefazEnviaLote([$this->currentXML], str_pad(1, 15, '0', STR_PAD_LEFT), 1);
 
       $stdCl = new Standardize();
       $std = $stdCl->toStd($this->response);
@@ -213,6 +239,81 @@ class FiscalController extends Connection
     $std->pCOFINS = number_format(0, 2, ".", "");
     $std->vCOFINS = number_format((floatval($produto['total']) * (0 / 100)), 2, ".", "");
 
+    return $std;
+  }
+
+  private function generateIcmssnData($produto, $item)
+  {
+    $std = new stdClass();
+    $std->item = $item;
+    $std->orig = isset($produto['origem']) ? $produto['origem'] : 0;
+    $std->CSOSN = isset($produto['csosn']) ? $produto['csosn'] : '102';
+    
+    // Para CSOSN 102 e similares, não há base de cálculo
+    // Dependendo do CSOSN, preencher campos específicos
+    switch ($std->CSOSN) {
+      case '101': // Tributada pelo Simples Nacional com permissão de crédito
+        $std->pCredSN = 3.00; // Alíquota aplicável de cálculo do crédito
+        $std->vCredICMSSN = number_format($this->baseCalculo * ($std->pCredSN / 100), 2, ".", "");
+        break;
+      
+      case '102': // Tributada pelo Simples Nacional sem permissão de crédito
+      case '103': // Isenção do ICMS no Simples Nacional para faixa de receita bruta
+      case '300': // Imune
+      case '400': // Não tributada pelo Simples Nacional
+        // Nenhum campo adicional necessário para estes CSOSNs
+        break;
+      
+      case '201': // Tributada pelo Simples Nacional com permissão de crédito e com cobrança do ICMS por substituição tributária
+      case '202': // Tributada pelo Simples Nacional sem permissão de crédito e com cobrança do ICMS por substituição tributária
+      case '203': // Isenção do ICMS no Simples Nacional para faixa de receita bruta e com cobrança do ICMS por substituição tributária
+        $std->modBCST = 4; // Margem Valor Agregado
+        $std->pMVAST = isset($produto['mva']) ? $produto['mva'] : 0.00;
+        $std->pRedBCST = isset($produto['reducao_st']) ? $produto['reducao_st'] : 0.00;
+        $std->vBCST = isset($produto['base_st']) ? $produto['base_st'] : 0.00;
+        $std->pICMSST = isset($produto['aliquota_st']) ? $produto['aliquota_st'] : 0.00;
+        $std->vICMSST = isset($produto['valor_st']) ? $produto['valor_st'] : 0.00;
+        
+        if ($std->CSOSN == '201') {
+          $std->pCredSN = 3.00;
+          $std->vCredICMSSN = number_format($this->baseCalculo * ($std->pCredSN / 100), 2, ".", "");
+        }
+        break;
+      
+      case '500': // ICMS cobrado anteriormente por substituição tributária
+        $std->vBCSTRet = isset($produto['base_retida']) ? $produto['base_retida'] : 0.00;
+        $std->pST = isset($produto['aliquota_st_retida']) ? $produto['aliquota_st_retida'] : 0.00;
+        $std->vICMSSTRet = isset($produto['valor_st_retido']) ? $produto['valor_st_retido'] : 0.00;
+        break;
+      
+      case '900': // Outros
+        $std->modBC = 3;
+        $std->vBC = $this->baseCalculo;
+        $std->pRedBC = isset($produto['reducao']) ? $produto['reducao'] : 0.00;
+        $std->pICMS = isset($produto['aliquota']) ? $produto['aliquota'] : 0.00;
+        $std->vICMS = $this->baseCalculo * ($std->pICMS / 100);
+        
+        // ST se houver
+        if (isset($produto['st']) && $produto['st'] === true) {
+          $std->modBCST = 4;
+          $std->pMVAST = isset($produto['mva']) ? $produto['mva'] : 0.00;
+          $std->pRedBCST = isset($produto['reducao_st']) ? $produto['reducao_st'] : 0.00;
+          $std->vBCST = isset($produto['base_st']) ? $produto['base_st'] : 0.00;
+          $std->pICMSST = isset($produto['aliquota_st']) ? $produto['aliquota_st'] : 0.00;
+          $std->vICMSST = isset($produto['valor_st']) ? $produto['valor_st'] : 0.00;
+        }
+        
+        // Crédito
+        $std->pCredSN = isset($produto['aliquota_credito']) ? $produto['aliquota_credito'] : 0.00;
+        $std->vCredICMSSN = $this->baseCalculo * ($std->pCredSN / 100);
+        break;
+    }
+    
+    // Cálculo do valor do ICMS para fins de totalização
+    if (in_array($std->CSOSN, ['101', '201', '900']) && isset($std->vCredICMSSN)) {
+      $this->valorIcms = $std->vCredICMSSN;
+    }
+    
     return $std;
   }
 
@@ -575,38 +676,6 @@ class FiscalController extends Connection
     return $std;
   }
 
-
-  private function generateIcmssnData($produto, $item)
-  {
-    $std = new stdClass();
-    $std->item    = $item;
-    $std->orig    = $produto['origem'];
-    $std->CSOSN   = $this->company->getSituacao_tributaria();
-    $std->vBC     = 0.00;
-    $std->pICMS   = 0.00;
-    $std->vICMS   = 0.00;
-
-    $std->modBCST         = 4;
-    $std->pMVAST          = 0.00;
-    $std->pRedBCST        = 0.00;
-    $std->vBCST           = 0.00;
-    $std->pICMSST         = 0.00;
-    $std->vICMSST         = 0.00;
-    $std->pRedBC          = 0.00;
-    $std->pCredSN         = 3.00;
-    $std->vCredICMSSN     = $this->baseCalculo * ($std->pCredSN / 100);
-    $std->vBCSTRet        = 0.00;
-    $std->vICMSSTRet      = 0.00;
-    $std->pST             = null;
-    $std->vICMSSubstituto = null;
-    $std->pRedBCEfet      = null;
-    $std->vBCEfet         = null;
-    $std->pICMSEfet       = null;
-    $std->vICMSEfet       = null;
-
-    return $std;
-  }
-
   private function generatePisData($produto, $item)
   {
     $percentual_pis =  floatval($produto['aliquota_pis']);
@@ -640,8 +709,8 @@ class FiscalController extends Connection
   private function generateIcmsTot()
   {
     $std = new stdClass();
-    $std->vBC = number_format($this->baseCalculo, 2, ".", ""); // Soma da base de cálculo do ICMS
-    $std->vICMS = number_format($this->valorIcms, 2, ".", ""); // Soma do valor do ICMS
+    $std->vBC = number_format($this->baseTotalIcms, 2, ".", ""); // Use a soma acumulada correta
+    $std->vICMS = number_format($this->totalIcms, 2, ".", ""); // Soma do valor do ICMS
     $std->vICMSDeson = 0.00;
     $std->vFCP = 0.00;
     $std->vBCST = 0.00;
@@ -785,6 +854,13 @@ class FiscalController extends Connection
             ]);
             break;
         }
+      } else {
+        http_response_code(500);
+        echo json_encode([
+          "error" => "Resposta inválida do SEFAZ ",
+          "response" => $std,
+          "xml" => $this->currentXML
+        ]);
       }
     } catch (\Exception $e) {
       http_response_code(500);
