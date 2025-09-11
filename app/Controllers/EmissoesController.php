@@ -42,23 +42,26 @@ class EmissoesController
     unlink($caminhoTemporario);
 
     if (!$resultado) {
-      http_response_code(200);
-      echo json_encode(['sucesso' => false, 'mensagem' => 'Senha incorreta ou certificado inválido.']);
+      http_response_code(400);
+      echo 'Senha incorreta ou certificado inválido.';
       return;
     }
 
     $certificado = openssl_x509_parse($certificado_info['cert']);
     $validadeInicio = $certificado['validFrom_time_t'];
     $validadeFim = $certificado['validTo_time_t'];
-    $tempoAtual = time();
+    $tempoAtual = time();  
 
     if ($tempoAtual < $validadeInicio || $tempoAtual > $validadeFim) {
-      http_response_code(200);
-      echo json_encode(['sucesso' => false, 'mensagem' => 'Certificado expirado ou ainda não é válido.']);
+      http_response_code(400);
+      echo 'Certificado expirado ou ainda não é válido.';
       return;
     }
 
     http_response_code(200);
-    echo json_encode(['sucesso' => true, 'mensagem' => 'Senha correta e certificado válido.']);
+    echo json_encode([
+      "empresa" => explode(':', $certificado['subject']['CN'])[0],
+      "cnpj" => explode(':', $certificado['subject']['CN'])[1]
+    ]);
   }
 }

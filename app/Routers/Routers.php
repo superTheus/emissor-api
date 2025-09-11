@@ -7,15 +7,19 @@ use App\Controllers\CfopController;
 use App\Controllers\CompanyController;
 use App\Controllers\CupomFiscalController;
 use App\Controllers\EmissoesController;
+use App\Controllers\EstadosController;
 use App\Controllers\FiscalController;
 use App\Controllers\FormaPagamentoController;
 use App\Controllers\IbptController;
+use App\Controllers\MunicipiosController;
 use App\Controllers\NcmController;
 use App\Controllers\OrigemController;
 use App\Controllers\SituacaoTributariaController;
 use App\Controllers\UnidadesController;
 use App\Controllers\UtilsController;
 use Bramus\Router\Router;
+
+header('Content-Type: application/json');
 
 class Routers
 {
@@ -196,6 +200,30 @@ class Routers
         $data = json_decode(file_get_contents('php://input'), true);
         $unidadesTributariaController = new UnidadesController();
         $unidadesTributariaController->find($data);
+      });
+    });
+
+    $router->mount('/estados', function () use ($router) {
+      $router->post('/', function () {
+        $data = json_decode(file_get_contents('php://input'), true);
+        $estadosController = new EstadosController();
+        $estadosController->find($data);
+      });
+
+      $router->post('/{uf}', function ($uf) {
+        $estadosController = new EstadosController();
+        $estadosController->find([
+          "filter" => ["uf" => $uf]
+        ]);
+      });
+    });
+
+    $router->mount('/municipios', function () use ($router) {
+      $router->post('/{uf}', function ($uf) {
+        $municipiosController = new MunicipiosController();
+        $municipiosController->find([
+          "filter" => ["uf" => $uf]
+        ]);
       });
     });
 
