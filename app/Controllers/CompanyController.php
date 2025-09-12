@@ -54,7 +54,7 @@ class CompanyController
           $result = $this->companyModel->create($data);
           if ($result) {
             http_response_code(200);
-            echo json_encode(array($result));
+            echo json_encode($result);
           } else {
             http_response_code(404);
             echo json_encode(['error' => 'Data not created successfully']);
@@ -85,7 +85,7 @@ class CompanyController
           $result = $this->companyModel->update($data);
           if ($result) {
             http_response_code(200);
-            echo json_encode(array($result));
+            echo json_encode($result);
           } else {
             http_response_code(404);
             echo json_encode(['error' => 'Data not created successfully']);
@@ -96,7 +96,7 @@ class CompanyController
       $result = $this->companyModel->update($data);
       if ($result) {
         http_response_code(200);
-        echo json_encode(array($result));
+        echo json_encode($result);
       } else {
         http_response_code(404);
         echo json_encode(['error' => 'Data not created successfully']);

@@ -7,34 +7,36 @@ use stdClass;
 class EstadosModel extends Connection
 {
   private $conn;
-  private $codigo;
+  private $id;
   private $nome;
   private $uf;
-  private $table = 'estado';
+  private $codigo_ibge;
+  private $table = 'estados';
 
   public function __construct($codigo = null)
   {
     $this->conn = $this->openConnection();
 
     if ($codigo) {
-      $this->setCodigo($codigo);
+      $this->setId($codigo);
       $this->getById();
     }
   }
 
   private function getById()
   {
-    $sql = "SELECT * FROM {$this->table} WHERE codigo = :codigo";
+    $sql = "SELECT * FROM {$this->table} WHERE id = :id";
 
     try {
       $stmt = $this->conn->prepare($sql);
-      $stmt->bindParam(':codigo', $this->codigo);
+      $stmt->bindParam(':id', $this->id);
       $stmt->execute();
 
       $cest = $stmt->fetch(\PDO::FETCH_ASSOC);
 
       $this->setNome($cest['nome']);
-      $this->setUf($cest['uf']);  
+      $this->setUf($cest['uf']);
+      $this->setCodigo_ibge($cest['codigo_ibge']);
     } catch (\PDOException $e) {
       echo $e->getMessage();
     }
@@ -43,9 +45,10 @@ class EstadosModel extends Connection
   public function getCurrent()
   {
     $data = new stdClass();
-    $data->codigo = $this->getCodigo();
+    $data->id = $this->getId();
     $data->nome = $this->getNome();
     $data->uf = $this->getUf();
+    $data->codigo_ibge = $this->getCodigo_ibge();
     return $data;
   }
 
@@ -86,21 +89,21 @@ class EstadosModel extends Connection
   }
 
   /**
-   * Get the value of codigo
+   * Get the value of id
    */ 
-  public function getCodigo()
+  public function getId()
   {
-    return $this->codigo;
+    return $this->id;
   }
 
   /**
-   * Set the value of codigo
+   * Set the value of id
    *
    * @return  self
    */ 
-  public function setCodigo($codigo)
+  public function setId($id)
   {
-    $this->codigo = $codigo;
+    $this->id = $id;
 
     return $this;
   }
@@ -141,6 +144,26 @@ class EstadosModel extends Connection
   public function setUf($uf)
   {
     $this->uf = $uf;
+
+    return $this;
+  }
+
+  /**
+   * Get the value of codigo_ibge
+   */ 
+  public function getCodigo_ibge()
+  {
+    return $this->codigo_ibge;
+  }
+
+  /**
+   * Set the value of codigo_ibge
+   *
+   * @return  self
+   */ 
+  public function setCodigo_ibge($codigo_ibge)
+  {
+    $this->codigo_ibge = $codigo_ibge;
 
     return $this;
   }

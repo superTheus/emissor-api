@@ -216,13 +216,25 @@ class Routers
           "filter" => ["uf" => $uf]
         ]);
       });
+
+      $router->get('/{uf}', function ($uf) {
+        $estadosController = new EstadosController();
+        $estadosController->findunique([
+          "filter" => ["uf" => $uf]
+        ]);
+      });
     });
 
     $router->mount('/municipios', function () use ($router) {
       $router->post('/{uf}', function ($uf) {
         $municipiosController = new MunicipiosController();
-        $municipiosController->find([
-          "filter" => ["uf" => $uf]
+        $municipiosController->findByUf($uf);
+      });
+
+      $router->get('/{cidade}', function ($cidade) {
+        $municipiosController = new MunicipiosController();
+        $municipiosController->findunique([
+          "filter" => ["nome" => $cidade]
         ]);
       });
     });
