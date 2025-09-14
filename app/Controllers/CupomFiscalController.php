@@ -61,6 +61,10 @@ class CupomFiscalController extends Connection
         $company = $companyModel->find([
           "cnpj" => UtilsController::soNumero($data['cnpj'])
         ]);
+        
+        if (!$company) {
+          throw new \Exception("Empresa não encontrada");
+        }
 
         $this->company = new CompanyModel($company[0]['id']);
         $this->ambiente = intval($this->company->getTpamb()) > 0 ? $this->company->getTpamb() : 1;

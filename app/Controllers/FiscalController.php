@@ -213,7 +213,7 @@ class FiscalController extends Connection
       echo json_encode([
         'error' => $e->getMessage(),
         "error_tags" => $this->nfe->getErrors(),
-        "error_xml" => $this->nfe->getXML()
+        "xml" => $this->nfe->getXML()
       ]);
     }
   }
@@ -854,13 +854,6 @@ class FiscalController extends Connection
             ]);
             break;
         }
-      } else {
-        http_response_code(500);
-        echo json_encode([
-          "error" => "Resposta inválida do SEFAZ ",
-          "response" => $std,
-          "xml" => $this->currentXML
-        ]);
       }
     } catch (\Exception $e) {
       http_response_code(500);
