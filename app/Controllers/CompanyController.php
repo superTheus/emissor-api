@@ -39,11 +39,16 @@ class CompanyController
   public function create($data)
   {
     if (isset($data['certificado'])) {
-      if (base64_decode($data['certificado'], true) === false) {
+      $certificadoBase64 = $data['certificado'];
+      if (strpos($certificadoBase64, 'base64,') !== false) {
+        $certificadoBase64 = explode('base64,', $certificadoBase64, 2)[1];
+      }
+
+      if (base64_decode($certificadoBase64, true) === false) {
         http_response_code(400); // Not Found
         echo json_encode(['error' => 'Certificado precisa ser uma string base64 válida']);
       } else {
-        $data['certificado'] = $this->companyModel->uploadCertificado($data['certificado']);
+        $data['certificado'] = $this->companyModel->uploadCertificado($certificadoBase64);
 
         $isInvalid = $this->companyModel->validateCertificate($data['cnpj'], $data['senha'], $data['certificado']);
 
@@ -70,11 +75,16 @@ class CompanyController
   public function update($data)
   {
     if (isset($data['certificado'])) {
-      if (base64_decode($data['certificado'], true) === false) {
+      $certificadoBase64 = $data['certificado'];
+      if (strpos($certificadoBase64, 'base64,') !== false) {
+        $certificadoBase64 = explode('base64,', $certificadoBase64, 2)[1];
+      }
+
+      if (base64_decode($certificadoBase64, true) === false) {
         http_response_code(400); // Not Found
         echo json_encode(['error' => 'Certificado precisa ser uma string base64 válida']);
       } else {
-        $data['certificado'] = $this->companyModel->uploadCertificado($data['certificado']);
+        $data['certificado'] = $this->companyModel->uploadCertificado($certificadoBase64);
 
         $isInvalid = $this->companyModel->validateCertificate($data['cnpj'], $data['senha'], $data['certificado']);
 

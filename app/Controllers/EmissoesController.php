@@ -31,6 +31,9 @@ class EmissoesController
 
   function verifyCertificate($certificadoBase64, $senha)
   {
+    if (strpos($certificadoBase64, 'base64,') !== false) {
+      $certificadoBase64 = explode('base64,', $certificadoBase64, 2)[1];
+    }
     $certificadoDecodificado = base64_decode($certificadoBase64);
 
     $caminhoTemporario = tempnam(sys_get_temp_dir(), 'cert');

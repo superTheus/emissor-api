@@ -208,7 +208,7 @@ class CompanyModel extends Connection
     try {
       $stmt = $this->conn->prepare($sql);
       $stmt->bindParam(':tpamb', $data['tpamb']);
-      $stmt->bindParam(':cnpj', $data['cnpj']);
+      $stmt->bindParam(':cnpj', preg_replace('/\D/', '', $data['cnpj']));
       $stmt->bindParam(':razao_social', $data['razao_social']);
       $stmt->bindParam(':nome_fantasia', $data['nome_fantasia']);
       $stmt->bindParam(':telefone', $data['telefone']);
@@ -387,6 +387,7 @@ class CompanyModel extends Connection
 
   public function validateCertificate($cnpj, $senha, $certificadoNome)
   {
+    $cnpj = preg_replace('/\D/', '', $cnpj);
     $folderPath = "app/storage/certificados";
     $certificadoPath = $folderPath . "/" . $certificadoNome;
 

@@ -53,7 +53,8 @@ class MunicipiosController
   {
     try {
       $estadoController = new EstadosController();
-      $estado = $estadoController->findOnly(['filter' => ["uf = '$uf'"]]);
+      $estado = $estadoController->findOnly(['filter' => ["uf" => $uf], 'limit' => 1]);
+
 
       if (!$estado) {
         http_response_code(404);
@@ -61,9 +62,7 @@ class MunicipiosController
         return;
       }
 
-      $estado = $estado[0];
-
-      $results = $this->municipiosModel->find(["id_estado = {$estado['id']}"]);
+      $results = $this->municipiosModel->find(["id_estado" => $estado['id']]);
 
       http_response_code(200);
       echo json_encode($results);
