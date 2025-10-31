@@ -58,6 +58,9 @@ class UtilsController
           echo $msg . "\n";
         }
       }
+    } else {
+      http_response_code(404); // Not Found
+      echo json_encode(["message" => "Empresa não encontrada"]);
     }
   }
 
