@@ -61,7 +61,7 @@ class CupomFiscalController extends Connection
         $company = $companyModel->find([
           "cnpj" => UtilsController::soNumero($data['cnpj'])
         ]);
-        
+
         if (!$company) {
           throw new \Exception("Empresa não encontrada");
         }
@@ -118,16 +118,23 @@ class CupomFiscalController extends Connection
       $this->nfe->tagide($this->generateIdeData($this->data));
       $this->nfe->tagemit($this->generateDataCompany());
       $this->nfe->tagenderEmit($this->generateDataAddress());
-      if (isset($data['cliente']) && !empty($data['cliente']) && $data['cliente']['nome'] !== 'CONSUMIDOR FINAL') {
+
+      if (isset($this->data['cliente']) && !empty($this->data['cliente']) && strtoupper($this->data['cliente']['nome']) !== 'CONSUMIDOR FINAL') {
         $this->nfe->tagdest($this->generateClientData($this->data));
+        if (isset($this->data['cliente']['endereco']) && !empty($this->data['cliente']['endereco'])) {
+          $this->nfe->tagenderDest($this->generateClientAddressData($this->data['cliente']['endereco']));
+        }
       }
 
-      if (isset($data['cliente']) && !empty($data['cliente'])) {
-        $this->nfe->tagenderDest($this->generateClientAddressData($data['cliente']['endereco']));
+      if (empty($this->produtos)) {
+        throw new \Exception("Nenhum produto informado para emissão da NFC-e");
       }
 
       foreach ($this->produtos as $index => $produto) {
-        $this->baseCalculo = ($produto['total'] - $produto['desconto'] + $produto['frete'] + $produto['acrescimo']);
+        $desconto = isset($produto['desconto']) ? floatval($produto['desconto']) : 0;
+        $frete = isset($produto['frete']) ? floatval($produto['frete']) : 0;
+        $acrescimo = isset($produto['acrescimo']) ? floatval($produto['acrescimo']) : 0;
+        $this->baseCalculo = max(0, floatval($produto['total']) - $desconto + $frete + $acrescimo);
         $this->valorIcms = 0;
         $this->nfe->tagprod($this->generateProductData($produto, $index + 1));
         if (isset($produto['informacoes_adicionais']) && !empty($produto['informacoes_adicionais'])) {
@@ -136,12 +143,16 @@ class CupomFiscalController extends Connection
 
         if (isset($produto['codigo_anp']) && !empty($produto['codigo_anp'])) {
           $this->nfe->tagcomb($this->addCombustivelTag($produto, $index));
+        }
+
+        if (isset($produto['codigo_anp']) && !empty($produto['codigo_anp'])) {
           $this->nfe->tagICMS($this->addICMSCombTag($produto, $index));
         } else {
           $this->nfe->tagICMSSN($this->generateIcmssnData($produto, $index + 1));
         }
 
         $this->nfe->tagimposto($this->generateImpostoData($produto, $index + 1));
+
         $this->totalIcms += number_format($this->valorIcms, 2, ".", "");
       }
 
@@ -150,6 +161,10 @@ class CupomFiscalController extends Connection
       $this->nfe->taginfRespTec($this->generateReponsavelTecnicp());
       $this->nfe->tagtransp($this->generateFreteData());
       $this->nfe->tagpag($this->generateFaturaData());
+
+      if (empty($this->pagamentos)) {
+        throw new \Exception("Nenhuma forma de pagamento informada para emissão da NFC-e");
+      }
 
       foreach ($this->pagamentos as $pagamento) {
         $this->nfe->tagdetPag($this->generatePagamentoData($pagamento));
@@ -263,7 +278,7 @@ class CupomFiscalController extends Connection
     $std = new stdClass();
     $std->cUF = $this->company->getCodigo_uf();
     $std->cNF = str_pad((date('Y') . 100), 8, '0', STR_PAD_LEFT);
-    $std->natOp = isset($data['operaca']) ? $data['operaca'] : 'VENDA DE MERCADORIA';
+    $std->natOp = isset($data['operacao']) ? $data['operacao'] : 'VENDA DE MERCADORIA';
     $std->mod = $this->mod;
     $std->serie = $this->serie;
     $std->nNF = $this->numero;
@@ -294,8 +309,10 @@ class CupomFiscalController extends Connection
     $std->xNome = $this->company->getRazao_social();
     $std->xFant = $this->company->getNome_fantasia();
     $std->IE = $this->company->getInscricao_estadual();
-    $std->CNAE = $this->company->getCnae();
-    $std->CRT = 1;
+    if (!empty($this->company->getCnae())) {
+      $std->CNAE = $this->company->getCnae();
+    }
+    $std->CRT = $this->company->getCrt() ?? 1;
     $std->CNPJ = $this->company->getCnpj();
 
     return $std;
@@ -352,7 +369,7 @@ class CupomFiscalController extends Connection
     $std->cMun = $endereco['codigo_municipio'];
     $std->xMun = $endereco['municipio'];
     $std->UF = $endereco['uf'];
-    $std->CEP = UtilsController::soNumero($endereco['uf']);
+    $std->CEP = UtilsController::soNumero($endereco['cep']);
     $std->cPais = '1058';
     $std->xPais = 'BRASIL';
 
@@ -388,7 +405,7 @@ class CupomFiscalController extends Connection
     }
 
     if (isset($produto['acrescimo']) && $produto['acrescimo'] > 0) {
-      $std->vDesc = number_format($produto['acrescimo'], 2, ".", "");
+      $std->vOutro = number_format($produto['acrescimo'], 2, ".", "");
     }
 
     $this->total_produtos += floatval($produto['total']);
@@ -449,9 +466,25 @@ class CupomFiscalController extends Connection
 
   private function generateImpostoData($produto, $item)
   {
-    $std = new stdClass();
+    $std = new \stdClass();
     $std->item = $item;
-    $std->vTotTrib = $produto['total'] * (0 / 100);
+
+    
+    $std->vTotTrib = number_format(0.00, 2, ".", "");
+
+    $std->PIS = new \stdClass();
+    $std->PIS->PISAliq = new \stdClass();
+    $std->PIS->PISAliq->CST = isset($produto['pis_cst']) ? $produto['pis_cst'] : '07'; // exemplo: 07 = isento
+    $std->PIS->PISAliq->vBC = number_format(0.00, 2, ".", "");
+    $std->PIS->PISAliq->pPIS = number_format(0.00, 2, ".", "");
+    $std->PIS->PISAliq->vPIS = number_format(0.00, 2, ".", "");
+
+    $std->COFINS = new \stdClass();
+    $std->COFINS->COFINSAliq = new \stdClass();
+    $std->COFINS->COFINSAliq->CST = isset($produto['cofins_cst']) ? $produto['cofins_cst'] : '07';
+    $std->COFINS->COFINSAliq->vBC = number_format(0.00, 2, ".", "");
+    $std->COFINS->COFINSAliq->pCOFINS = number_format(0.00, 2, ".", "");
+    $std->COFINS->COFINSAliq->vCOFINS = number_format(0.00, 2, ".", "");
 
     return $std;
   }
@@ -461,32 +494,120 @@ class CupomFiscalController extends Connection
     $std = new stdClass();
     $std->item    = $item;
     $std->orig    = $produto['origem'];
-    $std->CSOSN   = $this->company->getSituacao_tributaria();
-    $std->vBC     = 0.00;
-    $std->pICMS   = 0.00;
-    $std->vICMS   = 0.00;
+    $std->CSOSN   = (string) $this->resolveCSOSN();
 
-    $std->modBCST         = 4;
-    $std->pMVAST          = 0.00;
-    $std->pRedBCST        = 0.00;
-    $std->vBCST           = 0.00;
-    $std->pICMSST         = 0.00;
-    $std->vICMSST         = 0.00;
-    $std->pRedBC          = 0.00;
-    $std->pCredSN         = 3.00;
-    $std->vCredICMSSN     = $this->baseCalculo * ($std->pCredSN / 100);
-    $std->vBCSTRet        = 0.00;
-    $std->vICMSSTRet      = 0.00;
-    $std->vBCSTRet        = null;
-    $std->vICMSSTRet      = null;
-    $std->pST             = null;
-    $std->vICMSSubstituto = null;
-    $std->pRedBCEfet      = null;
-    $std->vBCEfet         = null;
-    $std->pICMSEfet       = null;
-    $std->vICMSEfet       = null;
+    // Fallback: se CSOSN estiver vazio ou inválido, usar 102 (sem crédito)
+    $validCsosn = ['101','102','103','300','400','201','202','203','500','900'];
+    if (empty($std->CSOSN) || !in_array($std->CSOSN, $validCsosn, true)) {
+      $std->CSOSN = '102';
+    }
 
+    // Para CSOSN 102, 103, 300, 400 - Simples Nacional sem permissão de crédito
+    if (in_array($std->CSOSN, ['102', '103', '300', '400'])) {
+      // Apenas origem e CSOSN são obrigatórios
+      return $std;
+    }
+
+    // Para CSOSN 101 - Simples Nacional com permissão de crédito
+    if ($std->CSOSN == '101') {
+      $std->pCredSN = 3.00;
+      $std->vCredICMSSN = number_format($this->baseCalculo * ($std->pCredSN / 100), 2, ".", "");
+      return $std;
+    }
+
+    // Para CSOSN 201 - Simples Nacional com permissão de crédito e com cobrança do ICMS por ST
+    if ($std->CSOSN == '201') {
+      $std->modBCST = 4;
+      $std->pMVAST = 0.00;
+      $std->pRedBCST = 0.00;
+      $std->vBCST = 0.00;
+      $std->pICMSST = 0.00;
+      $std->vICMSST = 0.00;
+      $std->pCredSN = 3.00;
+      $std->vCredICMSSN = number_format($this->baseCalculo * ($std->pCredSN / 100), 2, ".", "");
+      return $std;
+    }
+
+    // Para CSOSN 202, 203 - Simples Nacional com cobrança do ICMS por ST
+    if (in_array($std->CSOSN, ['202', '203'])) {
+      $std->modBCST = 4;
+      $std->pMVAST = 0.00;
+      $std->pRedBCST = 0.00;
+      $std->vBCST = 0.00;
+      $std->pICMSST = 0.00;
+      $std->vICMSST = 0.00;
+      return $std;
+    }
+
+    // Para CSOSN 500 - ICMS cobrado anteriormente por ST ou por antecipação
+    if ($std->CSOSN == '500') {
+      $std->vBCSTRet = 0.00;
+      $std->vICMSSTRet = 0.00;
+      return $std;
+    }
+
+    // Para CSOSN 900 - Outros
+    if ($std->CSOSN == '900') {
+      $std->modBC = 3;
+      $std->vBC = 0.00;
+      $std->pRedBC = 0.00;
+      $std->pICMS = 0.00;
+      $std->vICMS = 0.00;
+      $std->modBCST = 4;
+      $std->pMVAST = 0.00;
+      $std->pRedBCST = 0.00;
+      $std->vBCST = 0.00;
+      $std->pICMSST = 0.00;
+      $std->vICMSST = 0.00;
+      $std->pCredSN = 3.00;
+      $std->vCredICMSSN = number_format($this->baseCalculo * ($std->pCredSN / 100), 2, ".", "");
+      return $std;
+    }
+
+    // Caso padrão - retorna apenas origem e CSOSN
     return $std;
+  }
+
+  private function resolveCSOSN()
+  {
+    $validCsosn = ['101','102','103','300','400','201','202','203','500','900'];
+    $csosn = (string) ($this->company->getSituacao_tributaria() ?? '');
+
+    if (!empty($csosn) && in_array($csosn, $validCsosn, true)) {
+      return $csosn;
+    }
+
+    // Mapeia possíveis códigos vindos da request
+    if (isset($this->data['cliente']['tipo_icms'])) {
+      $tipo = strtoupper(trim((string)$this->data['cliente']['tipo_icms']));
+      switch ($tipo) {
+        case '101':
+        case 'CSOSN101':
+        case 'CREDITO':
+          return '101';
+        case 'RP':
+        case 'ISENTO':
+        case 'NAO TRIBUTADO':
+        case 'NAO-TRIBUTADO':
+        case 'SEM TRIBUTACAO':
+          return '102';
+        case '201':
+        case '202':
+        case '203':
+        case '500':
+        case '900':
+          // aceita diretamente se vier válido
+          if (in_array($tipo, $validCsosn, true)) {
+            return $tipo;
+          }
+          break;
+        default:
+          break;
+      }
+    }
+
+    // Fallback seguro
+    return '102';
   }
 
   private function generateIcmsTot()
