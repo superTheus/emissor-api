@@ -37,7 +37,7 @@ class FiscalController extends Connection
   private $produtos = [];
   private $pagamentos = [];
   private $baseCalculo = 0;
-  private $baseTotalIcms = 0; // Nova variável para soma da base de cálculo
+  private $baseTotalIcms = 0;
   private $origem = 0;
   private $totalIcms = 0;
   private $valorIcms = 0;
@@ -48,6 +48,8 @@ class FiscalController extends Connection
   private $warnings = [];
   private $response;
   private $mod = 55;
+  private $tipoCliente = 'PJ';
+  private $indIEDest = 9;
 
   public function __construct($data = null)
   {
@@ -55,6 +57,18 @@ class FiscalController extends Connection
     $dotenv->load();
 
     if ($data) {
+      $this->tipoCliente = $data['cliente']['tipo_documento'] === 'CPF' ? 'PF' : 'PJ';
+
+      if($this->tipoCliente === 'PF') {
+        $this->indIEDest = 9;
+      }
+
+      if($this->tipoCliente === 'PJ') {
+        $this->indIEDest = isset($data['cliente']['inscricao_estadual']) && !empty($data['cliente']['inscricao_estadual']) ?
+          $data['cliente']['tipo_icms'] ?? 1
+         : 9;
+      }
+
       $this->nfe = new Make();
       $this->data = $data;
 
@@ -440,6 +454,11 @@ class FiscalController extends Connection
     $std->tpAmb = $this->ambiente;
     $std->finNFe = 1;
     $std->indFinal = isset($data['consumidor_final']) && $data['consumidor_final'] === 'S'  ? 1 : 0;
+
+    if($this->tipoCliente === 'PF') {
+      $std->indFinal = 1;
+    }
+
     $std->indPres = 1; // Indica operação presencial
     $std->procEmi   = 0;
     $std->verProc = 1;
@@ -485,31 +504,26 @@ class FiscalController extends Connection
     if (isset($data['cliente']) && !empty($data['cliente'])) {
       $cliente = $data['cliente'];
       
-      // Verificar se é consumidor final genérico
       if (strtoupper($cliente['nome']) === 'CONSUMIDOR FINAL') {
         $std->xNome = "Consumidor Final";
         $std->CPF = '00000000000';
-        $std->indIEDest = 9; // Não contribuinte
+        $std->indIEDest = 9;
         return $std;
       }
       
       $std->xNome = $cliente['nome'];
       
-      // Pessoa Física (CPF)
       if ($cliente['tipo_documento'] === 'CPF') {
         $std->CPF = UtilsController::soNumero($cliente['documento']);
-        $std->indIEDest = 9; // Pessoa física é sempre não contribuinte
+        $std->indIEDest = $this->indIEDest;
         return $std;
       }
       
-      // Pessoa Jurídica (CNPJ)
       $std->CNPJ = UtilsController::soNumero($cliente['documento']);
       
-      // Resolver indIEDest baseado na IE informada
       $ieInfo = $this->resolveIndIEDest($cliente);
       $std->indIEDest = $ieInfo['indIEDest'];
       
-      // Só adiciona IE se for contribuinte (indIEDest = 1) e tiver IE válida
       if ($ieInfo['indIEDest'] === 1 && !empty($ieInfo['IE'])) {
         $std->IE = $ieInfo['IE'];
       }
@@ -519,6 +533,8 @@ class FiscalController extends Connection
       $std->CPF = (new UtilsController)->gerarCpfValido();
       $std->indIEDest = 9;
     }
+
+    die(json_encode($std));
 
     return $std;
   }
@@ -849,7 +865,8 @@ class FiscalController extends Connection
   private function generatePagamentoData($pagamento)
   {
     $std            = new stdClass();
-    $std->indPag = isset($pagamento['indPag']) ? $pagamento['indPag'] : 0;
+    $std->tpIntegra = 2;
+    $std->indPag    = isset($pagamento['indPag']) ? $pagamento['indPag'] : 0;
     $std->tPag      = STR_PAD($pagamento['tPag'], 2, '0', STR_PAD_LEFT);
     $std->vPag      = number_format($pagamento['valorpago'], 2, ".", "");
 
