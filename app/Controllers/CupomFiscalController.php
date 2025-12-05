@@ -337,20 +337,30 @@ class CupomFiscalController extends Connection
   private function generateClientData($data)
   {
     $std = new stdClass();
+    
+    // NFC-e (modelo 65) é sempre para consumidor final
+    // indIEDest = 9 (Não contribuinte) é o único permitido para NFC-e
     $std->indIEDest = 9;
 
     if (isset($data['cliente']) && !empty($data['cliente'])) {
       $cliente = $data['cliente'];
-      if (strtoupper($cliente['nome']) !== 'CONSUMIDOR FINAL') {
-        $std->xNome = $cliente['nome'];
-        if ($cliente['tipo_documento'] === 'CPF') {
-          $std->CPF = UtilsController::soNumero($cliente['documento']);
-        } else {
-          $std->CNPJ = UtilsController::soNumero($cliente['documento']);
-        }
-      } else {
+      
+      // Verificar se é consumidor final genérico
+      if (strtoupper($cliente['nome']) === 'CONSUMIDOR FINAL') {
         $std->xNome = "Consumidor Final";
         $std->CPF = '00000000000';
+        return $std;
+      }
+      
+      $std->xNome = $cliente['nome'];
+      
+      // NFC-e aceita CPF ou CNPJ, mas sempre como não contribuinte
+      if ($cliente['tipo_documento'] === 'CPF') {
+        $std->CPF = UtilsController::soNumero($cliente['documento']);
+      } else {
+        // Para CNPJ em NFC-e, não informa IE (é sempre consumidor final)
+        $std->CNPJ = UtilsController::soNumero($cliente['documento']);
+        // NFC-e não permite IE, então não adicionamos
       }
     } else {
       $std->xNome = "Consumidor Final";

@@ -481,43 +481,131 @@ class FiscalController extends Connection
   private function generateClientData($data)
   {
     $std = new stdClass();
-    $std->indIEDest = 9;
 
     if (isset($data['cliente']) && !empty($data['cliente'])) {
       $cliente = $data['cliente'];
-      if (strtoupper($cliente['nome']) !== 'CONSUMIDOR FINAL') {
-        $std->xNome = $cliente['nome'];
-        if ($cliente['tipo_documento'] === 'CPF') {
-          $std->CPF = UtilsController::soNumero($cliente['documento']);
-        } else {
-          $std->CNPJ = UtilsController::soNumero($cliente['documento']);
-
-          if (isset($cliente['inscricao_estadual'])) {
-            $std->IE = $cliente['inscricao_estadual'];
-          }
-
-          if (isset($cliente['tipo_icms'])) {
-            if ($cliente['tipo_icms'] == "1") {
-              $std->indIEDest = 1;
-            } else if ($cliente['tipo_icms'] == "2") {
-              $std->indIEDest = 2;
-            } else if ($cliente['tipo_icms'] == "9") {
-              $std->indIEDest = 9;
-            }
-          } else {
-            $std->indIEDest = 9;
-          }
-        }
-      } else {
+      
+      // Verificar se é consumidor final genérico
+      if (strtoupper($cliente['nome']) === 'CONSUMIDOR FINAL') {
         $std->xNome = "Consumidor Final";
         $std->CPF = '00000000000';
+        $std->indIEDest = 9; // Não contribuinte
+        return $std;
       }
+      
+      $std->xNome = $cliente['nome'];
+      
+      // Pessoa Física (CPF)
+      if ($cliente['tipo_documento'] === 'CPF') {
+        $std->CPF = UtilsController::soNumero($cliente['documento']);
+        $std->indIEDest = 9; // Pessoa física é sempre não contribuinte
+        return $std;
+      }
+      
+      // Pessoa Jurídica (CNPJ)
+      $std->CNPJ = UtilsController::soNumero($cliente['documento']);
+      
+      // Resolver indIEDest baseado na IE informada
+      $ieInfo = $this->resolveIndIEDest($cliente);
+      $std->indIEDest = $ieInfo['indIEDest'];
+      
+      // Só adiciona IE se for contribuinte (indIEDest = 1) e tiver IE válida
+      if ($ieInfo['indIEDest'] === 1 && !empty($ieInfo['IE'])) {
+        $std->IE = $ieInfo['IE'];
+      }
+      
     } else {
       $std->xNome = "Consumidor Final";
       $std->CPF = (new UtilsController)->gerarCpfValido();
+      $std->indIEDest = 9;
     }
 
     return $std;
+  }
+
+  /**
+   * Resolve o indIEDest baseado nas informações do cliente
+   * 
+   * indIEDest:
+   * 1 = Contribuinte ICMS (tem IE numérica válida)
+   * 2 = Contribuinte isento de Inscrição (CUIDADO: muitas SEFAZs rejeitam)
+   * 9 = Não Contribuinte (pessoa física ou PJ sem IE)
+   * 
+   * IMPORTANTE: Quando a SEFAZ rejeita indIEDest=1 (Isento), 
+   * devemos usar indIEDest=9 (Não Contribuinte) como alternativa segura.
+   */
+  private function resolveIndIEDest($cliente)
+  {
+    $result = [
+      'indIEDest' => 9, // Default: não contribuinte
+      'IE' => null
+    ];
+    
+    // Se não tem informação de IE, é não contribuinte
+    if (!isset($cliente['inscricao_estadual']) || empty($cliente['inscricao_estadual'])) {
+      return $result;
+    }
+    
+    $ie = trim(strtoupper($cliente['inscricao_estadual']));
+    
+    // Verificar se é ISENTO ou similar
+    $isIsentoTexto = in_array($ie, ['ISENTO', 'ISENTA', 'ISENT', 'IS', 'ISNT', '']);
+    
+    // Se informou tipo_icms explicitamente
+    if (isset($cliente['tipo_icms'])) {
+      $tipoIcms = strtoupper(trim($cliente['tipo_icms']));
+      
+      switch ($tipoIcms) {
+        case '1': // Contribuinte com IE
+        case 'CONTRIBUINTE':
+          // Só marca como contribuinte se tiver IE numérica válida
+          $ieNumerico = UtilsController::soNumero($ie);
+          if (!empty($ieNumerico) && strlen($ieNumerico) >= 2) {
+            $result['indIEDest'] = 1;
+            $result['IE'] = $ieNumerico;
+          } else {
+            // IE inválida/ISENTO - usar não contribuinte para evitar rejeição
+            $result['indIEDest'] = 9;
+          }
+          break;
+          
+        case '2': // Contribuinte isento
+        case 'ISENTO':
+        case 'ISENTA':
+          // ATENÇÃO: Muitas SEFAZs rejeitam indIEDest=2
+          // Por segurança, tratamos como não contribuinte (9)
+          // Se precisar forçar, descomentar linha abaixo:
+          // $result['indIEDest'] = 2;
+          $result['indIEDest'] = 9;
+          break;
+          
+        case '9': // Não contribuinte
+        case 'NAO_CONTRIBUINTE':
+        case 'NAO CONTRIBUINTE':
+        case 'NC':
+        case 'RP': // Revenda própria - tratar como não contribuinte
+        default:
+          $result['indIEDest'] = 9;
+          break;
+      }
+    } else {
+      // Sem tipo_icms definido, inferir pela IE
+      if ($isIsentoTexto) {
+        // ISENTO -> usar não contribuinte (evita rejeição)
+        $result['indIEDest'] = 9;
+      } else {
+        // Tem IE numérica -> contribuinte
+        $ieNumerico = UtilsController::soNumero($ie);
+        if (!empty($ieNumerico) && strlen($ieNumerico) >= 2) {
+          $result['indIEDest'] = 1;
+          $result['IE'] = $ieNumerico;
+        } else {
+          $result['indIEDest'] = 9;
+        }
+      }
+    }
+    
+    return $result;
   }
 
   private function generateClientAddressData($endereco)
