@@ -357,9 +357,9 @@ class CompanyModel extends Connection
 
     if (file_exists($certificadoPath)) {
       $certificado = file_get_contents($certificadoPath);
-      $certInfo = openssl_pkcs12_read($certificado, $certs, $this->getSenha());
+      $certs = \App\Controllers\UtilsController::openCertificate($certificado, $this->getSenha());
 
-      if ($certInfo) {
+      if ($certs) {
         return openssl_x509_parse($certs['cert']);
       } else {
         return null;
@@ -393,9 +393,9 @@ class CompanyModel extends Connection
 
     if (file_exists($certificadoPath)) {
       $certificado = file_get_contents($certificadoPath);
-      $certInfo = openssl_pkcs12_read($certificado, $certs, $senha);
+      $certs = \App\Controllers\UtilsController::openCertificate($certificado, $senha);
 
-      if ($certInfo) {
+      if ($certs) {
         $data = openssl_x509_parse($certs['cert']);
         $data = json_encode($data);
         $data = json_decode($data);
@@ -415,12 +415,7 @@ class CompanyModel extends Connection
           return "CNPJ do certificado é diferente do CNPJ informado";
         }
       } else {
-        $error = '';
-
-        while ($msg = openssl_error_string()) {
-          $error .= $msg . "\n";
-        }
-        return $error;
+        return "Senha incorreta ou certificado inválido";
       }
     } else {
       return "Certificado não encontrado";

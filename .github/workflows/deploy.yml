@@ -62,6 +62,7 @@ jobs:
           cd "$PROJECT_DIR"
 
           # fetch & ensure branch exactly equals remote master
+          git reset --hard
           git config --global --add safe.directory "$PROJECT_DIR"
           git fetch origin
           git checkout "${BRANCH}" || git checkout -b "${BRANCH}" origin/${BRANCH}
