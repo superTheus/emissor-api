@@ -163,28 +163,17 @@ CONF;
       throw new \Exception("Impossível ler o certificado. Verifique a senha ou formato do arquivo.");
     }
 
-    // Extrai informações do certificado
-    $certData = openssl_x509_parse($certs['cert']);
-    
-    if ($certData === false) {
-      throw new \Exception("Não foi possível analisar o certificado.");
-    }
+    // Cria objetos NFePHP com as chaves extraídas
+    $privateKey = new \NFePHP\Common\Certificate\PrivateKey($certs['pkey']);
+    $publicKey = new \NFePHP\Common\Certificate\PublicKey($certs['cert']);
+    $chainKeys = new \NFePHP\Common\Certificate\CertificationChain();
 
-    // NFePHP Certificate precisa de: conteúdo PEM, senha, dados do certificado
-    $pemData = $certs['cert'];
-    
-    if (!empty($certs['pkey'])) {
-      $pemData .= "\n" . $certs['pkey'];
-    }
-
-    // Cria objeto Certificate usando reflexão para acessar construtor protegido
-    $reflection = new \ReflectionClass(\NFePHP\Common\Certificate::class);
-    $certificate = $reflection->newInstanceWithoutConstructor();
-    
-    // Define as propriedades usando reflexão
-    $pemProperty = $reflection->getProperty('certificate');
-    $pemProperty->setAccessible(true);
-    $pemProperty->setValue($certificate, $pemData);
+    // Cria o objeto Certificate usando o construtor público
+    $certificate = new \NFePHP\Common\Certificate(
+      $privateKey,
+      $publicKey,
+      $chainKeys
+    );
 
     return $certificate;
   }
