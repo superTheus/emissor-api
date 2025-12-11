@@ -147,9 +147,13 @@ CONF;
       return false;
     }
 
+    // Garante que termina com quebra de linha
+    $cert = trim($certMatch[0]) . "\n";
+    $pkey = isset($keyMatch[0]) ? trim($keyMatch[0]) . "\n" : null;
+
     $result = [
-      'cert' => $certMatch[0],
-      'pkey' => isset($keyMatch[0]) ? $keyMatch[0] : null,
+      'cert' => $cert,
+      'pkey' => $pkey,
       'extracerts' => []
     ];
 
