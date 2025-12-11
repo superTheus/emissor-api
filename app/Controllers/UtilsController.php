@@ -221,6 +221,17 @@ CONF;
       $certs = self::openCertificate($certificado, $company->getSenha());
 
       if ($certs) {
+        // Testa se as chaves podem ser lidas pelo OpenSSL
+        $privKeyResource = openssl_pkey_get_private($certs['pkey']);
+        $certResource = openssl_x509_read($certs['cert']);
+        
+        $privKeyValid = $privKeyResource !== false;
+        $certValid = $certResource !== false;
+        
+        // Testa o formato combinado que o NFePHP usa
+        $combined = $certs['pkey'] . $certs['cert'];
+        $combinedValid = openssl_pkey_get_private($combined) !== false;
+        
         http_response_code(200);
         echo json_encode([
           "cert_start" => substr($certs['cert'], 0, 100),
@@ -230,7 +241,12 @@ CONF;
           "pkey_end" => substr($certs['pkey'], -100),
           "pkey_length" => strlen($certs['pkey']),
           "pkey_type" => strpos($certs['pkey'], 'RSA') !== false ? 'RSA PRIVATE KEY' : 
-                        (strpos($certs['pkey'], 'ENCRYPTED') !== false ? 'ENCRYPTED PRIVATE KEY' : 'PRIVATE KEY')
+                        (strpos($certs['pkey'], 'ENCRYPTED') !== false ? 'ENCRYPTED PRIVATE KEY' : 'PRIVATE KEY'),
+          "pkey_valid" => $privKeyValid,
+          "cert_valid" => $certValid,
+          "combined_valid" => $combinedValid,
+          "combined_length" => strlen($combined),
+          "has_double_newline" => strpos($combined, "\n\n") !== false
         ]);
       } else {
         http_response_code(500);
