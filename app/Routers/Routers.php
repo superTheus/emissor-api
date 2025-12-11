@@ -136,6 +136,10 @@ class Routers
         $router->get('/test/{cnpj}', function ($cnpj) {
           UtilsController::testCertificate($cnpj);
         });
+
+        $router->get('/debug/{cnpj}', function ($cnpj) {
+          UtilsController::debugCertificate($cnpj);
+        });
       });
     });
 

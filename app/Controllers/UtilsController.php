@@ -130,9 +130,18 @@ CONF;
     $pemContent = file_get_contents($caminhoConvertido);
     @unlink($caminhoConvertido);
     
-    // Extrai as partes do PEM
-    preg_match('/-----BEGIN CERTIFICATE-----(.*)-----END CERTIFICATE-----/s', $pemContent, $certMatch);
-    preg_match('/-----BEGIN PRIVATE KEY-----(.*)-----END PRIVATE KEY-----/s', $pemContent, $keyMatch);
+    // Extrai as partes do PEM - suporta múltiplos formatos de chave privada
+    preg_match('/-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----/s', $pemContent, $certMatch);
+    
+    // Tenta diferentes formatos de chave privada
+    if (!preg_match('/-----BEGIN PRIVATE KEY-----.*?-----END PRIVATE KEY-----/s', $pemContent, $keyMatch)) {
+      // Tenta formato RSA
+      preg_match('/-----BEGIN RSA PRIVATE KEY-----.*?-----END RSA PRIVATE KEY-----/s', $pemContent, $keyMatch);
+    }
+    if (!isset($keyMatch[0])) {
+      // Tenta formato ENCRYPTED
+      preg_match('/-----BEGIN ENCRYPTED PRIVATE KEY-----.*?-----END ENCRYPTED PRIVATE KEY-----/s', $pemContent, $keyMatch);
+    }
     
     if (!isset($certMatch[0])) {
       return false;
@@ -163,9 +172,25 @@ CONF;
       throw new \Exception("Impossível ler o certificado. Verifique a senha ou formato do arquivo.");
     }
 
+    if (empty($certs['pkey'])) {
+      throw new \Exception("Chave privada não encontrada no certificado.");
+    }
+
+    // Garante que as chaves estão formatadas corretamente (com quebras de linha)
+    $privateKeyPem = trim($certs['pkey']);
+    $publicKeyPem = trim($certs['cert']);
+    
+    // Valida que os PEM estão corretos
+    if (strpos($privateKeyPem, '-----BEGIN') === false || strpos($privateKeyPem, '-----END') === false) {
+      throw new \Exception("Formato de chave privada inválido.");
+    }
+    if (strpos($publicKeyPem, '-----BEGIN CERTIFICATE-----') === false) {
+      throw new \Exception("Formato de certificado público inválido.");
+    }
+
     // Cria objetos NFePHP com as chaves extraídas
-    $privateKey = new \NFePHP\Common\Certificate\PrivateKey($certs['pkey']);
-    $publicKey = new \NFePHP\Common\Certificate\PublicKey($certs['cert']);
+    $privateKey = new \NFePHP\Common\Certificate\PrivateKey($privateKeyPem);
+    $publicKey = new \NFePHP\Common\Certificate\PublicKey($publicKeyPem);
     $chainKeys = new \NFePHP\Common\Certificate\CertificationChain();
 
     // Cria o objeto Certificate usando o construtor público
@@ -176,6 +201,41 @@ CONF;
     );
 
     return $certificate;
+  }
+
+  public static function debugCertificate($cnpj)
+  {
+    $companyModel = new CompanyModel();
+    $company = $companyModel->find([
+      "cnpj" => $cnpj
+    ]);
+
+    if ($company) {
+      $company = new CompanyModel($company[0]['id']);
+
+      $certificado = self::getCertifcado($company->getCertificado());
+      $certs = self::openCertificate($certificado, $company->getSenha());
+
+      if ($certs) {
+        http_response_code(200);
+        echo json_encode([
+          "cert_start" => substr($certs['cert'], 0, 100),
+          "cert_end" => substr($certs['cert'], -100),
+          "cert_length" => strlen($certs['cert']),
+          "pkey_start" => substr($certs['pkey'], 0, 100),
+          "pkey_end" => substr($certs['pkey'], -100),
+          "pkey_length" => strlen($certs['pkey']),
+          "pkey_type" => strpos($certs['pkey'], 'RSA') !== false ? 'RSA PRIVATE KEY' : 
+                        (strpos($certs['pkey'], 'ENCRYPTED') !== false ? 'ENCRYPTED PRIVATE KEY' : 'PRIVATE KEY')
+        ]);
+      } else {
+        http_response_code(500);
+        echo json_encode(["error" => "Não foi possível abrir o certificado"]);
+      }
+    } else {
+      http_response_code(404);
+      echo json_encode(["message" => "Empresa não encontrada"]);
+    }
   }
 
   public static function testCertificate($cnpj)
