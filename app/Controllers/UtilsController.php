@@ -217,40 +217,50 @@ CONF;
     if ($company) {
       $company = new CompanyModel($company[0]['id']);
 
-      $certificado = self::getCertifcado($company->getCertificado());
-      $certs = self::openCertificate($certificado, $company->getSenha());
-
-      if ($certs) {
-        // Testa se as chaves podem ser lidas pelo OpenSSL
-        $privKeyResource = openssl_pkey_get_private($certs['pkey']);
-        $certResource = openssl_x509_read($certs['cert']);
+      try {
+        $certificado = self::getCertifcado($company->getCertificado());
+        $certificate = self::readPfxForNFePHP($certificado, $company->getSenha());
         
-        $privKeyValid = $privKeyResource !== false;
-        $certValid = $certResource !== false;
+        // Simula o que o NFePHP faz
+        $privateKeyStr = "{$certificate->privateKey}";
+        $publicKeyStr = "{$certificate->publicKey}";
+        $certificateStr = "{$certificate}";
         
-        // Testa o formato combinado que o NFePHP usa
-        $combined = $certs['pkey'] . $certs['cert'];
-        $combinedValid = openssl_pkey_get_private($combined) !== false;
+        // Testa cada parte
+        $privKeyValid = openssl_pkey_get_private($privateKeyStr) !== false;
+        $pubKeyValid = openssl_x509_read($publicKeyStr) !== false;
+        
+        // Simula o arquivo certfile que o NFePHP cria: privateKey + certificate
+        $certfile = $privateKeyStr . $certificateStr;
+        $certfileValid = openssl_pkey_get_private($certfile) !== false;
+        
+        // Salva em arquivo temporário para testar exatamente como o cURL vai ler
+        $tempFile = tempnam(sys_get_temp_dir(), 'cert_test') . '.pem';
+        file_put_contents($tempFile, $certfile);
+        $fileContent = file_get_contents($tempFile);
+        $fileValid = openssl_pkey_get_private($fileContent) !== false;
+        @unlink($tempFile);
         
         http_response_code(200);
         echo json_encode([
-          "cert_start" => substr($certs['cert'], 0, 100),
-          "cert_end" => substr($certs['cert'], -100),
-          "cert_length" => strlen($certs['cert']),
-          "pkey_start" => substr($certs['pkey'], 0, 100),
-          "pkey_end" => substr($certs['pkey'], -100),
-          "pkey_length" => strlen($certs['pkey']),
-          "pkey_type" => strpos($certs['pkey'], 'RSA') !== false ? 'RSA PRIVATE KEY' : 
-                        (strpos($certs['pkey'], 'ENCRYPTED') !== false ? 'ENCRYPTED PRIVATE KEY' : 'PRIVATE KEY'),
-          "pkey_valid" => $privKeyValid,
-          "cert_valid" => $certValid,
-          "combined_valid" => $combinedValid,
-          "combined_length" => strlen($combined),
-          "has_double_newline" => strpos($combined, "\n\n") !== false
+          "privateKey_length" => strlen($privateKeyStr),
+          "privateKey_valid" => $privKeyValid,
+          "privateKey_start" => substr($privateKeyStr, 0, 50),
+          "privateKey_end" => substr($privateKeyStr, -50),
+          "publicKey_length" => strlen($publicKeyStr),
+          "publicKey_valid" => $pubKeyValid,
+          "publicKey_start" => substr($publicKeyStr, 0, 50),
+          "publicKey_end" => substr($publicKeyStr, -50),
+          "certificate_length" => strlen($certificateStr),
+          "certificate_start" => substr($certificateStr, 0, 50),
+          "certfile_length" => strlen($certfile),
+          "certfile_valid" => $certfileValid,
+          "file_read_valid" => $fileValid,
+          "file_equals_string" => $fileContent === $certfile
         ]);
-      } else {
+      } catch (\Exception $e) {
         http_response_code(500);
-        echo json_encode(["error" => "Não foi possível abrir o certificado"]);
+        echo json_encode(["error" => $e->getMessage()]);
       }
     } else {
       http_response_code(404);
