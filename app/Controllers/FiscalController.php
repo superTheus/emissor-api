@@ -534,8 +534,6 @@ class FiscalController extends Connection
       $std->indIEDest = 9;
     }
 
-    die(json_encode($std));
-
     return $std;
   }
 
@@ -765,7 +763,6 @@ class FiscalController extends Connection
 
   private function generateIPIData($produto, $item)
   {
-    // die(json_encode($produto));
     $percentual_ipi =  floatval($produto['aliquota_ipi']);
     $valorIpi = $this->baseCalculo * ($percentual_ipi / 100);
 
