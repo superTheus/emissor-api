@@ -107,9 +107,15 @@ class FiscalController extends Connection
         } else {
           $this->pagamentos = [];
         }
-
-        $this->tools = new Tools(json_encode($this->config), Certificate::readPfx($this->certificado, $this->company->getSenha()));
-        $this->tools->model($this->mod);
+        
+        try {
+          $certificadoPem = UtilsController::readPfxForNFePHP($this->certificado, $this->company->getSenha());
+          $this->tools = new Tools(json_encode($this->config), $certificadoPem);
+          $this->tools->model($this->mod);
+        } catch (\Exception $e) {
+          http_response_code(500);
+          echo json_encode(['error' => $e->getMessage()]);
+        }
 
         if ($this->conexaoSefaz() === false) {
           $this->modo_emissao = 9;
@@ -355,7 +361,8 @@ class FiscalController extends Connection
       $emissoesModel = new EmissoesModel($data['chave']);
       $emissao = $emissoesModel->getCurrent();
 
-      $this->tools = new Tools(json_encode($this->config), Certificate::readPfx($this->certificado, $this->company->getSenha()));
+      $certificadoPem = UtilsController::readPfxForNFePHP($this->certificado, $this->company->getSenha());
+      $this->tools = new Tools(json_encode($this->config), $certificadoPem);
 
       $response = $this->tools->sefazCancela($emissao->chave, $data['justificativa'], $emissao->protocolo);
       $stdCl = new Standardize();

@@ -147,6 +147,48 @@ CONF;
     return $result;
   }
 
+  /**
+   * Lê certificado PFX e retorna no formato compatível com NFePHP Tools
+   * Alternativa ao Certificate::readPfx() com suporte a algoritmos legacy
+   * 
+   * @param string $certificadoContent Conteúdo binário do certificado
+   * @param string $senha Senha do certificado
+   * @return \NFePHP\Common\Certificate Objeto Certificate do NFePHP
+   */
+  public static function readPfxForNFePHP($certificadoContent, $senha)
+  {
+    $certs = self::openCertificate($certificadoContent, $senha);
+    
+    if (!$certs) {
+      throw new \Exception("Impossível ler o certificado. Verifique a senha ou formato do arquivo.");
+    }
+
+    // Extrai informações do certificado
+    $certData = openssl_x509_parse($certs['cert']);
+    
+    if ($certData === false) {
+      throw new \Exception("Não foi possível analisar o certificado.");
+    }
+
+    // NFePHP Certificate precisa de: conteúdo PEM, senha, dados do certificado
+    $pemData = $certs['cert'];
+    
+    if (!empty($certs['pkey'])) {
+      $pemData .= "\n" . $certs['pkey'];
+    }
+
+    // Cria objeto Certificate usando reflexão para acessar construtor protegido
+    $reflection = new \ReflectionClass(\NFePHP\Common\Certificate::class);
+    $certificate = $reflection->newInstanceWithoutConstructor();
+    
+    // Define as propriedades usando reflexão
+    $pemProperty = $reflection->getProperty('certificate');
+    $pemProperty->setAccessible(true);
+    $pemProperty->setValue($certificate, $pemData);
+
+    return $certificate;
+  }
+
   public static function testCertificate($cnpj)
   {
     $companyModel = new CompanyModel();
