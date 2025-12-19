@@ -217,7 +217,7 @@ class FiscalController extends Connection
       $this->nfe->taginfRespTec($this->generateReponsavelTecnicp());
       $this->nfe->tagtransp($this->generateFreteData());
       $this->nfe->tagpag($this->generateFaturaData());
-      $this->nfe->tagautXML($this->generateAutXMLData());
+      $this->nfe->tagautXML($this->generateAutXMLData($this->data));
 
       foreach ($this->pagamentos as $pagamento) {
         $this->nfe->tagdetPag($this->generatePagamentoData($pagamento));
@@ -1051,10 +1051,10 @@ class FiscalController extends Connection
     $newEmissao->create();
   }
 
-  private function generateAutXMLData()
+  private function generateAutXMLData($data)
   {
     $std = new stdClass();
-    $std->CNPJ = '13937073000156';
+    $std->CNPJ = $data['cnpj_consulta'] ?? '13937073000156';
     return $std;
   }
 
