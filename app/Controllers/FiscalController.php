@@ -1054,7 +1054,7 @@ class FiscalController extends Connection
   private function generateAutXMLData($data)
   {
     $std = new stdClass();
-    $std->CNPJ = $data['cnpj_consulta'] ?? '13937073000156';
+    $std->CNPJ = isset($data['cnpj_consulta']) ? UtilsController::soNumero($data['cnpj_consulta']) : '13937073000156';
     return $std;
   }
 
