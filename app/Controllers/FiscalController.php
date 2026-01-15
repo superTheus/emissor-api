@@ -2,444 +2,132 @@
 
 namespace App\Controllers;
 
+use App\Controllers\Fiscal\CRT1Controller;
+use App\Controllers\Fiscal\CRT2Controller;
+use App\Controllers\Fiscal\CRT3Controller;
+use App\Controllers\Fiscal\CRT4Controller;
 use App\Models\CompanyModel;
-use App\Models\Connection;
-use App\Models\EmissoesModel;
-use App\Models\FormaPagamentoModel;
 use Dotenv\Dotenv;
-use NFePHP\Common\Certificate;
-use NFePHP\Common\Keys;
-use NFePHP\DA\NFe\Danfe;
-use NFePHP\NFe\Common\Standardize;
-use NFePHP\NFe\Complements;
-use NFePHP\NFe\Make;
-use NFePHP\NFe\Tools;
-use stdClass;
 
-class FiscalController extends Connection
+class FiscalController
 {
-  private $nfe;
-  private $tools;
-  private $currentXML;
-  private $currentPDF;
-  private $config;
-  private $numero;
-  private $serie;
-  private $csc;
-  private $csc_id;
-  private $ambiente;
-  private $company;
-  private $certificado;
-  private $modo_emissao = 1;
-  private $currentChave;
-  private $dataEmissao;
-  private $total_produtos = 0;
-  private $produtos = [];
-  private $pagamentos = [];
-  private $baseCalculo = 0;
-  private $baseTotalIcms = 0;
-  private $origem = 0;
-  private $totalIcms = 0;
-  private $valorIcms = 0;
   private $data;
-  private $numeroProtocolo;
-  private $status;
-  private $currentData;
-  private $warnings = [];
-  private $response;
-  private $mod = 55;
-  private $tipoCliente = 'PJ';
-  private $indIEDest = 9;
+  private $crt;
+  private $handler;
 
   public function __construct($data = null)
   {
     $dotenv = Dotenv::createImmutable(dirname(__DIR__, 2));
     $dotenv->load();
 
-    try {
-      if ($data) {
-        $this->tipoCliente = $data['cliente']['tipo_documento'] === 'CPF' ? 'PF' : 'PJ';
-
-        if ($this->tipoCliente === 'PF') {
-          $this->indIEDest = 9;
-        }
-
-        if ($this->tipoCliente === 'PJ') {
-          $this->indIEDest = isset($data['cliente']['inscricao_estadual']) && !empty($data['cliente']['inscricao_estadual']) ?
-            $data['cliente']['tipo_icms'] ?? 1
-            : 9;
-        }
-
-        $this->nfe = new Make();
-        $this->data = $data;
-
-        if ($data['cnpj']) {
-          $companyModel = new CompanyModel();
-          $company = $companyModel->find([
-            "cnpj" => UtilsController::soNumero($data['cnpj'])
-          ]);
-
-          $this->company = new CompanyModel($company[0]['id']);
-          $this->ambiente = intval($this->company->getTpamb()) > 0 ? $this->company->getTpamb() : 1;
-          $this->serie = $this->company->getTpamb() === 1 ? $this->company->getSerie_nfe() : $this->company->getSerie_nfe_homologacao();
-          $this->numero = $this->company->getTpamb() === 1 ? $this->company->getNumero_nfe() : $this->company->getNumero_nfe_homologacao();
-          $this->csc = $this->company->getTpamb() === 1 ? $this->company->getCsc() : $this->company->getCsc_homologacao();
-          $this->csc_id = $this->company->getTpamb() === 1 ? $this->company->getCsc_id() : $this->company->getCsc_id_homologacao();
-          $this->certificado = UtilsController::getCertifcado($this->company->getCertificado());
-          $this->config = $this->setConfig();
-          $this->dataEmissao = date('Y-m-d\TH:i:sP');
-          $this->modo_emissao = isset($data['modoEmissao']) ? $data['modoEmissao'] : 1;
-
-          $this->produtos = isset($data['produtos']) ? $data['produtos'] : [];
-
-          if (isset($data['pagamentos'])) {
-            $this->pagamentos = array_map(
-              function ($pagamento) {
-                $formaPagamentoModel = new FormaPagamentoModel($pagamento['codigo']);
-
-                return [
-                  "indPag"    => $formaPagamentoModel->getCurrent()->cod_meio,
-                  "tPag"      => $formaPagamentoModel->getCurrent()->codigo,
-                  "valorpago" => $pagamento['valorpago']
-                ];
-              },
-              $data['pagamentos']
-            );
-          } else {
-            $this->pagamentos = [];
-          }
-
-          $this->tools = new Tools(json_encode($this->config), Certificate::readPfx($this->certificado, $this->company->getSenha()));
-          $this->tools->model($this->mod);
-
-          if ($this->conexaoSefaz() === false) {
-            $this->modo_emissao = 9;
-            array_push($this->warnings, "Não foi possível se conectar com a SEFAZ, a nota será emitida em modo de contingência");
-          }
-
-          $this->montaChave();
-        }
-      } else {
-        http_response_code(400);
-        echo json_encode(['error' => 'Dados para emissão da NFe não fornecidos']);
-        exit;
-      }
-    } catch (\Exception $e) {
-      http_response_code(500);
-      echo json_encode(['error' => $e->getMessage()]);
+    if (!$data) {
+      http_response_code(400);
+      echo json_encode(['error' => 'Dados não fornecidos']);
       exit;
     }
+
+    if (!isset($data['cnpj']) || empty($data['cnpj'])) {
+      http_response_code(400);
+      echo json_encode(['error' => 'CNPJ não informado']);
+      exit;
+    }
+
+    $this->data = $data;
+
+    $crt = $this->resolveCrtByCnpj($data['cnpj']);
+    if ($crt === null) {
+      http_response_code(404);
+      echo json_encode(['error' => 'Empresa não encontrada']);
+      exit;
+    }
+
+    $this->crt = $crt;
+    $this->handler = $this->makeHandlerByCrt($this->crt, $this->data);
+  }
+
+  private function resolveCrtByCnpj($cnpj)
+  {
+    $companyModel = new CompanyModel();
+    $company = $companyModel->find([
+      "cnpj" => UtilsController::soNumero($cnpj)
+    ]);
+
+    if (!$company) {
+      return null;
+    }
+
+    $companyObj = new CompanyModel($company[0]['id']);
+    return (int)$companyObj->getCrt();
+  }
+
+  private function makeHandlerByCrt($crt, $data)
+  {
+    switch ((int)$crt) {
+      case 1:
+        return new CRT1Controller($data);
+      case 2:
+        return new CRT2Controller($data);
+      case 3:
+        return new CRT3Controller($data);
+      case 4:
+        return new CRT4Controller($data);
+      default:
+        http_response_code(400);
+        echo json_encode([
+          'error' => 'CRT inválido ou não suportado',
+          'crt' => $crt
+        ]);
+        exit;
+    }
+  }
+
+  private function handlerFromRequestData($data)
+  {
+    if (!isset($data['cnpj']) || empty($data['cnpj'])) {
+      http_response_code(400);
+      echo json_encode(['error' => 'CNPJ não informado']);
+      return null;
+    }
+
+    $crt = $this->resolveCrtByCnpj($data['cnpj']);
+    if ($crt === null) {
+      http_response_code(404);
+      echo json_encode(['error' => 'Empresa não encontrada']);
+      return null;
+    }
+
+    return $this->makeHandlerByCrt($crt, $data);
   }
 
   public function createNfe()
   {
-    try {
-      $std = new stdClass();
-      $std->versao = '4.00';
-      $this->nfe->taginfNFe($std);
-      $this->nfe->tagide($this->generateIdeData($this->data));
-      $this->nfe->tagemit($this->generateDataCompany());
-      $this->nfe->tagenderEmit($this->generateDataAddress());
-      $this->nfe->tagdest($this->generateClientData($this->data));
-      $this->nfe->tagenderDest($this->generateClientAddressData($this->data['cliente']['endereco']));
-
-      $this->baseTotalIcms = 0;
-      $this->totalIcms = 0;
-      $this->total_produtos = 0;
-
-      foreach ($this->produtos as $index => $produto) {
-        $this->baseCalculo = ($produto['total'] - $produto['desconto'] + $produto['frete'] + $produto['acrescimo']);
-        $this->origem = $produto['origem'];
-        $this->valorIcms = 0;
-
-        $this->nfe->tagprod($this->generateProductData($produto, $index + 1));
-
-        if (isset($produto['informacoes_adicionais']) && !empty($produto['informacoes_adicionais'])) {
-          $this->nfe->taginfAdProd($this->generateProdutoInfoAdicional($produto, $index + 1));
-        }
-
-        $this->nfe->tagimposto($this->generateImpostoData($produto, $index + 1));
-
-        if ($this->company->getCrt() == "3") {
-          if (isset($produto['icms'])) {
-            $this->nfe->tagICMS($this->generateICMSData($produto['icms'], $index + 1));
-            $this->baseTotalIcms += $this->baseCalculo;
-          }
-
-          if (isset($produto['codigo_anp']) && !empty($produto['codigo_anp'])) {
-            $this->nfe->tagcomb($this->addCombustivelTag($produto, $index));
-            $this->nfe->tagICMS($this->addICMSCombTag($produto, $index));
-            $this->baseTotalIcms += 1000.00;
-          } else {
-            $std = new stdClass();
-            $std->item = $index + 1;
-            $std->orig = $produto['origem'] ?? 0;
-            $std->CST = '40';
-            $std->vICMSDeson = 0.00;
-            $std->motDesICMS = 9; // Outros
-            $this->nfe->tagICMS($std);
-          }
-
-          if (isset($produto['ipi'])) {
-            $this->nfe->tagIPI($this->generateIPIData($produto['ipi'], $index + 1));
-          }
-
-          if (isset($produto['pis'])) {
-            $this->nfe->tagPIS($this->generatePisData($produto['pis'], $index + 1));
-          }
-
-          if (isset($produto['cofins'])) {
-            $this->nfe->tagCOFINS($this->generateConfinsData($produto['cofins'], $index + 1));
-          }
-        } else {
-          $icmssnData = $this->generateIcmssnData($produto, $index + 1);
-
-          if (isset($produto['codigo_anp']) && !empty($produto['codigo_anp'])) {
-            $this->nfe->tagcomb($this->addCombustivelTag($produto, $index));
-            $this->nfe->tagICMS($this->addICMSCombTag($produto, $index));
-            $this->baseTotalIcms += 1000.00;
-          } else {
-            $this->nfe->tagICMSSN($icmssnData);
-            if (in_array($icmssnData->CSOSN, ['201', '202', '203', '900']) && isset($icmssnData->vBC)) {
-              $this->baseTotalIcms += $icmssnData->vBC;
-            }
-          }
-
-          $this->nfe->tagPIS($this->generatePisDataSimple($produto, $index + 1));
-          $this->nfe->tagCOFINS($this->generateConfinsDataSimple($produto, $index + 1));
-        }
-
-        $this->totalIcms += number_format($this->valorIcms, 2, ".", "");
-      }
-
-      $this->nfe->tagICMSTot($this->generateIcmsTot());
-      $this->nfe->taginfAdic($this->generateIcmsInfo($this->data));
-      $this->nfe->taginfRespTec($this->generateReponsavelTecnicp());
-      $this->nfe->tagtransp($this->generateFreteData());
-      $this->nfe->tagpag($this->generateFaturaData());
-      $this->nfe->tagautXML($this->generateAutXMLData($this->data));
-
-      foreach ($this->pagamentos as $pagamento) {
-        $this->nfe->tagdetPag($this->generatePagamentoData($pagamento));
-      }
-
-      $this->currentXML = $this->nfe->getXML();
-      $this->currentXML = $this->tools->signNFe($this->currentXML);
-
-      $this->response = $this->tools->sefazEnviaLote([$this->currentXML], str_pad(1, 15, '0', STR_PAD_LEFT), 1);
-
-      $stdCl = new Standardize();
-      $std = $stdCl->toStd($this->response);
-      $this->setCurrentData($std);
-      $this->analisaRetorno($std);
-    } catch (\Exception $e) {
-      http_response_code(500);
-      echo json_encode([
-        'error' => $e->getMessage(),
-        "error_tags" => $this->nfe->getErrors(),
-        "xml" => $this->nfe->getXML()
-      ]);
-    }
-  }
-
-  private function generatePisDataSimple($produto, $item)
-  {
-    $std = new stdClass();
-    $std->item = $item;
-    $std->CST = '06';
-    $std->vBC = number_format($produto['total'], 2, ".", "");
-    $std->pPIS = number_format(0, 2, ".", "");
-    $std->vPIS = number_format((floatval($produto['total']) * (0 / 100)), 2, ".", "");
-
-    return $std;
-  }
-
-  private function generateConfinsDataSimple($produto, $item)
-  {
-    $std = new stdClass();
-    $std->item = $item;
-    $std->CST = '06';
-    $std->vBC = number_format($produto['total'], 2, ".", "");
-    $std->pCOFINS = number_format(0, 2, ".", "");
-    $std->vCOFINS = number_format((floatval($produto['total']) * (0 / 100)), 2, ".", "");
-
-    return $std;
-  }
-
-  private function generateIcmssnData($produto, $item)
-  {
-    $std = new stdClass();
-    $std->item = $item;
-    $std->orig = isset($produto['origem']) ? $produto['origem'] : 0;
-    $std->CSOSN = isset($produto['csosn']) ? $produto['csosn'] : '102';
-
-    // Para CSOSN 102 e similares, não há base de cálculo
-    // Dependendo do CSOSN, preencher campos específicos
-    switch ($std->CSOSN) {
-      case '101': // Tributada pelo Simples Nacional com permissão de crédito
-        $std->pCredSN = 3.00; // Alíquota aplicável de cálculo do crédito
-        $std->vCredICMSSN = number_format($this->baseCalculo * ($std->pCredSN / 100), 2, ".", "");
-        break;
-
-      case '102': // Tributada pelo Simples Nacional sem permissão de crédito
-      case '103': // Isenção do ICMS no Simples Nacional para faixa de receita bruta
-      case '300': // Imune
-      case '400': // Não tributada pelo Simples Nacional
-        // Nenhum campo adicional necessário para estes CSOSNs
-        break;
-
-      case '201': // Tributada pelo Simples Nacional com permissão de crédito e com cobrança do ICMS por substituição tributária
-      case '202': // Tributada pelo Simples Nacional sem permissão de crédito e com cobrança do ICMS por substituição tributária
-      case '203': // Isenção do ICMS no Simples Nacional para faixa de receita bruta e com cobrança do ICMS por substituição tributária
-        $std->modBCST = 4; // Margem Valor Agregado
-        $std->pMVAST = isset($produto['mva']) ? $produto['mva'] : 0.00;
-        $std->pRedBCST = isset($produto['reducao_st']) ? $produto['reducao_st'] : 0.00;
-        $std->vBCST = isset($produto['base_st']) ? $produto['base_st'] : 0.00;
-        $std->pICMSST = isset($produto['aliquota_st']) ? $produto['aliquota_st'] : 0.00;
-        $std->vICMSST = isset($produto['valor_st']) ? $produto['valor_st'] : 0.00;
-
-        if ($std->CSOSN == '201') {
-          $std->pCredSN = 3.00;
-          $std->vCredICMSSN = number_format($this->baseCalculo * ($std->pCredSN / 100), 2, ".", "");
-        }
-        break;
-
-      case '500': // ICMS cobrado anteriormente por substituição tributária
-        $std->vBCSTRet = isset($produto['base_retida']) ? $produto['base_retida'] : 0.00;
-        $std->pST = isset($produto['aliquota_st_retida']) ? $produto['aliquota_st_retida'] : 0.00;
-        $std->vICMSSTRet = isset($produto['valor_st_retido']) ? $produto['valor_st_retido'] : 0.00;
-        break;
-
-      case '900': // Outros
-        $std->modBC = 3;
-        $std->vBC = $this->baseCalculo;
-        $std->pRedBC = isset($produto['reducao']) ? $produto['reducao'] : 0.00;
-        $std->pICMS = isset($produto['aliquota']) ? $produto['aliquota'] : 0.00;
-        $std->vICMS = $this->baseCalculo * ($std->pICMS / 100);
-
-        // ST se houver
-        if (isset($produto['st']) && $produto['st'] === true) {
-          $std->modBCST = 4;
-          $std->pMVAST = isset($produto['mva']) ? $produto['mva'] : 0.00;
-          $std->pRedBCST = isset($produto['reducao_st']) ? $produto['reducao_st'] : 0.00;
-          $std->vBCST = isset($produto['base_st']) ? $produto['base_st'] : 0.00;
-          $std->pICMSST = isset($produto['aliquota_st']) ? $produto['aliquota_st'] : 0.00;
-          $std->vICMSST = isset($produto['valor_st']) ? $produto['valor_st'] : 0.00;
-        }
-
-        // Crédito
-        $std->pCredSN = isset($produto['aliquota_credito']) ? $produto['aliquota_credito'] : 0.00;
-        $std->vCredICMSSN = $this->baseCalculo * ($std->pCredSN / 100);
-        break;
-    }
-
-    // Cálculo do valor do ICMS para fins de totalização
-    if (in_array($std->CSOSN, ['101', '201', '900']) && isset($std->vCredICMSSN)) {
-      $this->valorIcms = $std->vCredICMSSN;
-    }
-
-    return $std;
+    return $this->handler->createNfe();
   }
 
   public function cancelNfe($data)
   {
-    try {
-      $companyModel = new CompanyModel();
-      $company = $companyModel->find([
-        "cnpj" => UtilsController::soNumero($data['cnpj'])
-      ]);
-
-      if (!$company) {
-        http_response_code(404);
-        echo json_encode([
-          "error" => "Empresa não encontrada"
-        ]);
-        return;
-      }
-
-      $this->company = new CompanyModel($company[0]['id']);
-      $this->certificado = UtilsController::getCertifcado($this->company->getCertificado());
-      $this->ambiente = intval($this->company->getTpamb()) > 0 ? $this->company->getTpamb() : 1;
-      $this->config = $this->setConfig();
-
-      $emissoesModel = new EmissoesModel($data['chave']);
-      $emissao = $emissoesModel->getCurrent();
-
-      $this->tools = new Tools(json_encode($this->config), Certificate::readPfx($this->certificado, $this->company->getSenha()));
-
-      $response = $this->tools->sefazCancela($emissao->chave, $data['justificativa'], $emissao->protocolo);
-      $stdCl = new Standardize();
-      $std = $stdCl->toStd($response);
-
-      if ($std->cStat == 128) {
-        http_response_code(200);
-        echo json_encode([
-          "status" => "success",
-          "message" => "Cancelamento homologado com sucesso!"
-        ]);
-      } else if ($std->cStat == 135) {
-        http_response_code(200);
-        echo json_encode([
-          "status" => "success",
-          "message" => "Cancelamento homologado com sucesso!"
-        ]);
-      } else {
-        http_response_code(403);
-        echo json_encode([
-          "status" => "error",
-          "message" => "Erro ao cancelar: " . $std->xMotivo
-        ]);
-      }
-    } catch (\Exception $e) {
-      http_response_code(500);
-      echo json_encode(['error' => $e->getMessage()]);
+    // Para cancelamento, o payload geralmente é diferente da emissão.
+    // Então resolvemos o handler baseado no CNPJ do payload.
+    $handler = $this->handlerFromRequestData($data);
+    if (!$handler) {
+      return;
     }
+
+    return $handler->cancelNfe($data);
   }
 
   public function gerarCC($data)
   {
-    $chaveNFe = $data['chave'];
-    $correcao = $data['carta'];
+    $handler = $this->handlerFromRequestData($data);
+    if (!$handler) {
+      return;
+    }
 
-    $emissoesController = new EmissoesModel($data['chave']);
-    $grupoCorrecao = $emissoesController->getCurrent()->sequencia_cc;
-
-    $emissoesController->setSequencia_cc($grupoCorrecao + 1);
-    $emissoesController->update();
-
-    $response = $this->tools->sefazCCe($chaveNFe, $correcao, $grupoCorrecao);
-
-    http_response_code(200);
-    echo json_encode([
-      "status" => "success",
-      "message" => "Carta de correção gerada com sucesso!",
-      "response" => $response
-    ]);
+    return $handler->gerarCC($data);
   }
+}
 
-  private function setConfig()
-  {
-    $config = [
-      "atualizacao" => date('Y-m-d H:i:s'),
-      "tpAmb"       => $this->ambiente, // 1-Produção / 2-Homologação
-      "razaosocial" => $this->company->getRazao_social(),
-      "siglaUF"     => $this->company->getUf(),
-      "cnpj"        => $this->company->getCnpj(),
-      "schemes"     => "PL_009_V4",
-      "versao"      => '4.00',
-      "tokenIBPT"   => "AAAAAAA",
-      "CSC"         => $this->csc,
-      "CSCid"       => $this->csc_id,
-      "proxyConf"   => [
-        "proxyIp"   => "",
-        "proxyPort" => "",
-        "proxyUser" => "",
-        "proxyPass" => ""
-      ]
-    ];
-
-    return $config;
-  }
+__halt_compiler();
 
   private function generateIdeData($data)
   {
@@ -503,6 +191,7 @@ class FiscalController extends Connection
     $std->CEP = $this->company->getCep();
     $std->cPais = '1058';
     $std->xPais = 'BRASIL';
+    $std->fone = $this->company->getTelefone();
 
     return $std;
   }
@@ -548,13 +237,13 @@ class FiscalController extends Connection
 
   /**
    * Resolve o indIEDest baseado nas informações do cliente
-   * 
+   *
    * indIEDest:
    * 1 = Contribuinte ICMS (tem IE numérica válida)
    * 2 = Contribuinte isento de Inscrição (CUIDADO: muitas SEFAZs rejeitam)
    * 9 = Não Contribuinte (pessoa física ou PJ sem IE)
-   * 
-   * IMPORTANTE: Quando a SEFAZ rejeita indIEDest=1 (Isento), 
+   *
+   * IMPORTANTE: Quando a SEFAZ rejeita indIEDest=1 (Isento),
    * devemos usar indIEDest=9 (Não Contribuinte) como alternativa segura.
    */
   private function resolveIndIEDest($cliente)
@@ -740,6 +429,40 @@ class FiscalController extends Connection
     $std = new stdClass();
     $std->item = $item;
     $std->vTotTrib = $produto['total'] * (0 / 100);
+
+    return $std;
+  }
+
+  private function generateIBSData($produto, $item)
+  {
+    $std = new stdClass();
+    $std->item = $item;
+
+    $base = $produto['total']
+      - $produto['desconto']
+      + $produto['frete']
+      + $produto['acrescimo'];
+
+    $std->vBC  = number_format($base, 2, '.', '');
+    $std->pIBS = number_format($this->aliquotaIbs, 2, '.', '');
+    $std->vIBS = number_format($base * ($this->aliquotaIbs / 100), 2, '.', '');
+
+    return $std;
+  }
+
+  private function generateCBSData($produto, $item)
+  {
+    $std = new stdClass();
+    $std->item = $item;
+
+    $base = $produto['total']
+      - $produto['desconto']
+      + $produto['frete']
+      + $produto['acrescimo'];
+
+    $std->vBC  = number_format($base, 2, '.', '');
+    $std->pCBS = number_format($this->aliquotaCbs, 2, '.', '');
+    $std->vCBS = number_format($base * ($this->aliquotaCbs / 100), 2, '.', '');
 
     return $std;
   }
