@@ -96,7 +96,7 @@ class CupomFiscalController extends Connection
           $this->pagamentos = [];
         }
 
-        $this->tools = new Tools(json_encode($this->config), UtilsController::readPfxForNFePHP($this->certificado, $this->company->getSenha()));
+        $this->tools = new Tools(json_encode($this->config), Certificate::readPfx($this->certificado, $this->company->getSenha()));
         $this->tools->model($this->mod);
 
         // if ($this->conexaoSefaz() === false) {
