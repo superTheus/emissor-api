@@ -56,74 +56,78 @@ class FiscalController extends Connection
     $dotenv = Dotenv::createImmutable(dirname(__DIR__, 2));
     $dotenv->load();
 
-    if ($data) {
-      $this->tipoCliente = $data['cliente']['tipo_documento'] === 'CPF' ? 'PF' : 'PJ';
+    try {
+      if ($data) {
+        $this->tipoCliente = $data['cliente']['tipo_documento'] === 'CPF' ? 'PF' : 'PJ';
 
-      if($this->tipoCliente === 'PF') {
-        $this->indIEDest = 9;
-      }
-
-      if($this->tipoCliente === 'PJ') {
-        $this->indIEDest = isset($data['cliente']['inscricao_estadual']) && !empty($data['cliente']['inscricao_estadual']) ?
-          $data['cliente']['tipo_icms'] ?? 1
-         : 9;
-      }
-
-      $this->nfe = new Make();
-      $this->data = $data;
-
-      if ($data['cnpj']) {
-        $companyModel = new CompanyModel();
-        $company = $companyModel->find([
-          "cnpj" => UtilsController::soNumero($data['cnpj'])
-        ]);
-
-        $this->company = new CompanyModel($company[0]['id']);
-        $this->ambiente = intval($this->company->getTpamb()) > 0 ? $this->company->getTpamb() : 1;
-        $this->serie = $this->company->getTpamb() === 1 ? $this->company->getSerie_nfe() : $this->company->getSerie_nfe_homologacao();
-        $this->numero = $this->company->getTpamb() === 1 ? $this->company->getNumero_nfe() : $this->company->getNumero_nfe_homologacao();
-        $this->csc = $this->company->getTpamb() === 1 ? $this->company->getCsc() : $this->company->getCsc_homologacao();
-        $this->csc_id = $this->company->getTpamb() === 1 ? $this->company->getCsc_id() : $this->company->getCsc_id_homologacao();
-        $this->certificado = UtilsController::getCertifcado($this->company->getCertificado());
-        $this->config = $this->setConfig();
-        $this->dataEmissao = date('Y-m-d\TH:i:sP');
-        $this->modo_emissao = isset($data['modoEmissao']) ? $data['modoEmissao'] : 1;
-
-        $this->produtos = isset($data['produtos']) ? $data['produtos'] : [];
-
-        if (isset($data['pagamentos'])) {
-          $this->pagamentos = array_map(
-            function ($pagamento) {
-              $formaPagamentoModel = new FormaPagamentoModel($pagamento['codigo']);
-
-              return [
-                "indPag"    => $formaPagamentoModel->getCurrent()->cod_meio,
-                "tPag"      => $formaPagamentoModel->getCurrent()->codigo,
-                "valorpago" => $pagamento['valorpago']
-              ];
-            },
-            $data['pagamentos']
-          );
-        } else {
-          $this->pagamentos = [];
+        if ($this->tipoCliente === 'PF') {
+          $this->indIEDest = 9;
         }
-        
-        try {
-          $certificadoPem = UtilsController::readPfxForNFePHP($this->certificado, $this->company->getSenha());
-          $this->tools = new Tools(json_encode($this->config), $certificadoPem);
+
+        if ($this->tipoCliente === 'PJ') {
+          $this->indIEDest = isset($data['cliente']['inscricao_estadual']) && !empty($data['cliente']['inscricao_estadual']) ?
+            $data['cliente']['tipo_icms'] ?? 1
+            : 9;
+        }
+
+        $this->nfe = new Make();
+        $this->data = $data;
+
+        if ($data['cnpj']) {
+          $companyModel = new CompanyModel();
+          $company = $companyModel->find([
+            "cnpj" => UtilsController::soNumero($data['cnpj'])
+          ]);
+
+          $this->company = new CompanyModel($company[0]['id']);
+          $this->ambiente = intval($this->company->getTpamb()) > 0 ? $this->company->getTpamb() : 1;
+          $this->serie = $this->company->getTpamb() === 1 ? $this->company->getSerie_nfe() : $this->company->getSerie_nfe_homologacao();
+          $this->numero = $this->company->getTpamb() === 1 ? $this->company->getNumero_nfe() : $this->company->getNumero_nfe_homologacao();
+          $this->csc = $this->company->getTpamb() === 1 ? $this->company->getCsc() : $this->company->getCsc_homologacao();
+          $this->csc_id = $this->company->getTpamb() === 1 ? $this->company->getCsc_id() : $this->company->getCsc_id_homologacao();
+          $this->certificado = UtilsController::getCertifcado($this->company->getCertificado());
+          $this->config = $this->setConfig();
+          $this->dataEmissao = date('Y-m-d\TH:i:sP');
+          $this->modo_emissao = isset($data['modoEmissao']) ? $data['modoEmissao'] : 1;
+
+          $this->produtos = isset($data['produtos']) ? $data['produtos'] : [];
+
+          if (isset($data['pagamentos'])) {
+            $this->pagamentos = array_map(
+              function ($pagamento) {
+                $formaPagamentoModel = new FormaPagamentoModel($pagamento['codigo']);
+
+                return [
+                  "indPag"    => $formaPagamentoModel->getCurrent()->cod_meio,
+                  "tPag"      => $formaPagamentoModel->getCurrent()->codigo,
+                  "valorpago" => $pagamento['valorpago']
+                ];
+              },
+              $data['pagamentos']
+            );
+          } else {
+            $this->pagamentos = [];
+          }
+
+          $this->tools = new Tools(json_encode($this->config), Certificate::readPfx($this->certificado, $this->company->getSenha()));
           $this->tools->model($this->mod);
-        } catch (\Exception $e) {
-          http_response_code(500);
-          echo json_encode(['error' => $e->getMessage()]);
-        }
 
-        if ($this->conexaoSefaz() === false) {
-          $this->modo_emissao = 9;
-          array_push($this->warnings, "Não foi possível se conectar com a SEFAZ, a nota será emitida em modo de contingência");
-        }
+          if ($this->conexaoSefaz() === false) {
+            $this->modo_emissao = 9;
+            array_push($this->warnings, "Não foi possível se conectar com a SEFAZ, a nota será emitida em modo de contingência");
+          }
 
-        $this->montaChave();
+          $this->montaChave();
+        }
+      } else {
+        http_response_code(400);
+        echo json_encode(['error' => 'Dados para emissão da NFe não fornecidos']);
+        exit;
       }
+    } catch (\Exception $e) {
+      http_response_code(500);
+      echo json_encode(['error' => $e->getMessage()]);
+      exit;
     }
   }
 
@@ -155,13 +159,13 @@ class FiscalController extends Connection
         }
 
         $this->nfe->tagimposto($this->generateImpostoData($produto, $index + 1));
-        
+
         if ($this->company->getCrt() == "3") {
           if (isset($produto['icms'])) {
             $this->nfe->tagICMS($this->generateICMSData($produto['icms'], $index + 1));
             $this->baseTotalIcms += $this->baseCalculo;
           }
-          
+
           if (isset($produto['codigo_anp']) && !empty($produto['codigo_anp'])) {
             $this->nfe->tagcomb($this->addCombustivelTag($produto, $index));
             $this->nfe->tagICMS($this->addICMSCombTag($produto, $index));
@@ -200,7 +204,7 @@ class FiscalController extends Connection
               $this->baseTotalIcms += $icmssnData->vBC;
             }
           }
-          
+
           $this->nfe->tagPIS($this->generatePisDataSimple($produto, $index + 1));
           $this->nfe->tagCOFINS($this->generateConfinsDataSimple($produto, $index + 1));
         }
@@ -213,7 +217,7 @@ class FiscalController extends Connection
       $this->nfe->taginfRespTec($this->generateReponsavelTecnicp());
       $this->nfe->tagtransp($this->generateFreteData());
       $this->nfe->tagpag($this->generateFaturaData());
-      $this->nfe->tagautXML($this->generateAutXMLData());
+      $this->nfe->tagautXML($this->generateAutXMLData($this->data));
 
       foreach ($this->pagamentos as $pagamento) {
         $this->nfe->tagdetPag($this->generatePagamentoData($pagamento));
@@ -268,7 +272,7 @@ class FiscalController extends Connection
     $std->item = $item;
     $std->orig = isset($produto['origem']) ? $produto['origem'] : 0;
     $std->CSOSN = isset($produto['csosn']) ? $produto['csosn'] : '102';
-    
+
     // Para CSOSN 102 e similares, não há base de cálculo
     // Dependendo do CSOSN, preencher campos específicos
     switch ($std->CSOSN) {
@@ -276,14 +280,14 @@ class FiscalController extends Connection
         $std->pCredSN = 3.00; // Alíquota aplicável de cálculo do crédito
         $std->vCredICMSSN = number_format($this->baseCalculo * ($std->pCredSN / 100), 2, ".", "");
         break;
-      
+
       case '102': // Tributada pelo Simples Nacional sem permissão de crédito
       case '103': // Isenção do ICMS no Simples Nacional para faixa de receita bruta
       case '300': // Imune
       case '400': // Não tributada pelo Simples Nacional
         // Nenhum campo adicional necessário para estes CSOSNs
         break;
-      
+
       case '201': // Tributada pelo Simples Nacional com permissão de crédito e com cobrança do ICMS por substituição tributária
       case '202': // Tributada pelo Simples Nacional sem permissão de crédito e com cobrança do ICMS por substituição tributária
       case '203': // Isenção do ICMS no Simples Nacional para faixa de receita bruta e com cobrança do ICMS por substituição tributária
@@ -293,26 +297,26 @@ class FiscalController extends Connection
         $std->vBCST = isset($produto['base_st']) ? $produto['base_st'] : 0.00;
         $std->pICMSST = isset($produto['aliquota_st']) ? $produto['aliquota_st'] : 0.00;
         $std->vICMSST = isset($produto['valor_st']) ? $produto['valor_st'] : 0.00;
-        
+
         if ($std->CSOSN == '201') {
           $std->pCredSN = 3.00;
           $std->vCredICMSSN = number_format($this->baseCalculo * ($std->pCredSN / 100), 2, ".", "");
         }
         break;
-      
+
       case '500': // ICMS cobrado anteriormente por substituição tributária
         $std->vBCSTRet = isset($produto['base_retida']) ? $produto['base_retida'] : 0.00;
         $std->pST = isset($produto['aliquota_st_retida']) ? $produto['aliquota_st_retida'] : 0.00;
         $std->vICMSSTRet = isset($produto['valor_st_retido']) ? $produto['valor_st_retido'] : 0.00;
         break;
-      
+
       case '900': // Outros
         $std->modBC = 3;
         $std->vBC = $this->baseCalculo;
         $std->pRedBC = isset($produto['reducao']) ? $produto['reducao'] : 0.00;
         $std->pICMS = isset($produto['aliquota']) ? $produto['aliquota'] : 0.00;
         $std->vICMS = $this->baseCalculo * ($std->pICMS / 100);
-        
+
         // ST se houver
         if (isset($produto['st']) && $produto['st'] === true) {
           $std->modBCST = 4;
@@ -322,18 +326,18 @@ class FiscalController extends Connection
           $std->pICMSST = isset($produto['aliquota_st']) ? $produto['aliquota_st'] : 0.00;
           $std->vICMSST = isset($produto['valor_st']) ? $produto['valor_st'] : 0.00;
         }
-        
+
         // Crédito
         $std->pCredSN = isset($produto['aliquota_credito']) ? $produto['aliquota_credito'] : 0.00;
         $std->vCredICMSSN = $this->baseCalculo * ($std->pCredSN / 100);
         break;
     }
-    
+
     // Cálculo do valor do ICMS para fins de totalização
     if (in_array($std->CSOSN, ['101', '201', '900']) && isset($std->vCredICMSSN)) {
       $this->valorIcms = $std->vCredICMSSN;
     }
-    
+
     return $std;
   }
 
@@ -462,7 +466,7 @@ class FiscalController extends Connection
     $std->finNFe = 1;
     $std->indFinal = isset($data['consumidor_final']) && $data['consumidor_final'] === 'S'  ? 1 : 0;
 
-    if($this->tipoCliente === 'PF') {
+    if ($this->tipoCliente === 'PF') {
       $std->indFinal = 1;
     }
 
@@ -510,31 +514,30 @@ class FiscalController extends Connection
 
     if (isset($data['cliente']) && !empty($data['cliente'])) {
       $cliente = $data['cliente'];
-      
+
       if (strtoupper($cliente['nome']) === 'CONSUMIDOR FINAL') {
         $std->xNome = "Consumidor Final";
         $std->CPF = '00000000000';
         $std->indIEDest = 9;
         return $std;
       }
-      
+
       $std->xNome = $cliente['nome'];
-      
+
       if ($cliente['tipo_documento'] === 'CPF') {
         $std->CPF = UtilsController::soNumero($cliente['documento']);
         $std->indIEDest = $this->indIEDest;
         return $std;
       }
-      
+
       $std->CNPJ = UtilsController::soNumero($cliente['documento']);
-      
+
       $ieInfo = $this->resolveIndIEDest($cliente);
       $std->indIEDest = $ieInfo['indIEDest'];
-      
+
       if ($ieInfo['indIEDest'] === 1 && !empty($ieInfo['IE'])) {
         $std->IE = $ieInfo['IE'];
       }
-      
     } else {
       $std->xNome = "Consumidor Final";
       $std->CPF = (new UtilsController)->gerarCpfValido();
@@ -546,13 +549,13 @@ class FiscalController extends Connection
 
   /**
    * Resolve o indIEDest baseado nas informações do cliente
-   * 
+   *
    * indIEDest:
    * 1 = Contribuinte ICMS (tem IE numérica válida)
    * 2 = Contribuinte isento de Inscrição (CUIDADO: muitas SEFAZs rejeitam)
    * 9 = Não Contribuinte (pessoa física ou PJ sem IE)
-   * 
-   * IMPORTANTE: Quando a SEFAZ rejeita indIEDest=1 (Isento), 
+   *
+   * IMPORTANTE: Quando a SEFAZ rejeita indIEDest=1 (Isento),
    * devemos usar indIEDest=9 (Não Contribuinte) como alternativa segura.
    */
   private function resolveIndIEDest($cliente)
@@ -561,21 +564,21 @@ class FiscalController extends Connection
       'indIEDest' => 9, // Default: não contribuinte
       'IE' => null
     ];
-    
+
     // Se não tem informação de IE, é não contribuinte
     if (!isset($cliente['inscricao_estadual']) || empty($cliente['inscricao_estadual'])) {
       return $result;
     }
-    
+
     $ie = trim(strtoupper($cliente['inscricao_estadual']));
-    
+
     // Verificar se é ISENTO ou similar
     $isIsentoTexto = in_array($ie, ['ISENTO', 'ISENTA', 'ISENT', 'IS', 'ISNT', '']);
-    
+
     // Se informou tipo_icms explicitamente
     if (isset($cliente['tipo_icms'])) {
       $tipoIcms = strtoupper(trim($cliente['tipo_icms']));
-      
+
       switch ($tipoIcms) {
         case '1': // Contribuinte com IE
         case 'CONTRIBUINTE':
@@ -589,7 +592,7 @@ class FiscalController extends Connection
             $result['indIEDest'] = 9;
           }
           break;
-          
+
         case '2': // Contribuinte isento
         case 'ISENTO':
         case 'ISENTA':
@@ -599,7 +602,7 @@ class FiscalController extends Connection
           // $result['indIEDest'] = 2;
           $result['indIEDest'] = 9;
           break;
-          
+
         case '9': // Não contribuinte
         case 'NAO_CONTRIBUINTE':
         case 'NAO CONTRIBUINTE':
@@ -625,7 +628,7 @@ class FiscalController extends Connection
         }
       }
     }
-    
+
     return $result;
   }
 
@@ -1049,10 +1052,10 @@ class FiscalController extends Connection
     $newEmissao->create();
   }
 
-  private function generateAutXMLData()
+  private function generateAutXMLData($data)
   {
     $std = new stdClass();
-    $std->CNPJ = '13937073000156';
+    $std->CNPJ = isset($data['cnpj_consulta']) ? UtilsController::soNumero($data['cnpj_consulta']) : '13937073000156';
     return $std;
   }
 
