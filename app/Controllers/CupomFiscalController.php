@@ -99,10 +99,10 @@ class CupomFiscalController extends Connection
         $this->tools = new Tools(json_encode($this->config), UtilsController::readPfxForNFePHP($this->certificado, $this->company->getSenha()));
         $this->tools->model($this->mod);
 
-        if ($this->conexaoSefaz() === false) {
-          $this->modo_emissao = 9;
-          array_push($this->warnings, "Não foi possível se conectar com a SEFAZ, a nota será emitida em modo de contingência");
-        }
+        // if ($this->conexaoSefaz() === false) {
+        //   $this->modo_emissao = 9;
+        //   array_push($this->warnings, "Não foi possível se conectar com a SEFAZ, a nota será emitida em modo de contingência");
+        // }
 
         $this->montaChave();
       }
@@ -337,23 +337,23 @@ class CupomFiscalController extends Connection
   private function generateClientData($data)
   {
     $std = new stdClass();
-    
+
     // NFC-e (modelo 65) é sempre para consumidor final
     // indIEDest = 9 (Não contribuinte) é o único permitido para NFC-e
     $std->indIEDest = 9;
 
     if (isset($data['cliente']) && !empty($data['cliente'])) {
       $cliente = $data['cliente'];
-      
+
       // Verificar se é consumidor final genérico
       if (strtoupper($cliente['nome']) === 'CONSUMIDOR FINAL') {
         $std->xNome = "Consumidor Final";
         $std->CPF = '00000000000';
         return $std;
       }
-      
+
       $std->xNome = $cliente['nome'];
-      
+
       // NFC-e aceita CPF ou CNPJ, mas sempre como não contribuinte
       if ($cliente['tipo_documento'] === 'CPF') {
         $std->CPF = UtilsController::soNumero($cliente['documento']);
@@ -479,7 +479,7 @@ class CupomFiscalController extends Connection
     $std = new \stdClass();
     $std->item = $item;
 
-    
+
     $std->vTotTrib = number_format(0.00, 2, ".", "");
 
     $std->PIS = new \stdClass();
