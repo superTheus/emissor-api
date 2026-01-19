@@ -25,10 +25,6 @@ class CRT2Controller extends BaseFiscalController
   {
     $item = $index + 1;
 
-    // IBS e CBS (novos tributos da reforma tributária)
-    $this->nfe->tagIBS($this->generateIBSData($produto, $item));
-    $this->nfe->tagCBS($this->generateCBSData($produto, $item));
-
     // Verificar se é combustível
     if (isset($produto['codigo_anp']) && !empty($produto['codigo_anp'])) {
       $this->nfe->tagcomb($this->addCombustivelTag($produto, $index));

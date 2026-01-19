@@ -55,8 +55,10 @@ abstract class BaseFiscalController extends Connection
   protected $mod = 55;
   protected $tipoCliente = 'PJ';
   protected $indIEDest = 9;
-  protected $aliquotaIbs = 0.00;
+  protected $aliquotaIbsEstadual = 0.00;
+  protected $aliquotaIbsMunicipal = 0.00;
   protected $aliquotaCbs = 0.00;
+
 
   public function __construct($data = null)
   {
@@ -107,7 +109,8 @@ abstract class BaseFiscalController extends Connection
 
     // Para emissão, dataEmissao é relevante; para cancelamento/CCe, não atrapalha.
     if (empty($this->dataEmissao)) {
-      $this->dataEmissao = date('Y-m-d\TH:i:sP');
+      // Usa a data/hora atual do servidor com timezone configurado
+      $this->dataEmissao = (new \DateTime('now'))->format('Y-m-d\TH:i:sP');
     }
 
     $this->tools = new Tools(json_encode($this->config), Certificate::readPfx($this->certificado, $this->company->getSenha()));
@@ -133,7 +136,7 @@ abstract class BaseFiscalController extends Connection
         : 9;
     }
 
-    $this->nfe = new Make();
+    $this->nfe = new Make(10);
     $this->data = $data;
 
     if (!isset($data['cnpj']) || empty($data['cnpj'])) {
@@ -146,6 +149,22 @@ abstract class BaseFiscalController extends Connection
 
     $this->modo_emissao = isset($data['modoEmissao']) ? $data['modoEmissao'] : 1;
     $this->produtos = isset($data['produtos']) ? $data['produtos'] : [];
+
+    $this->baseCalculo = floatval($this->data['total'] ?? 0) + floatval($this->data['total_acrescimo'] ?? 0) + floatval($this->data['total_frete'] ?? 0) - floatval($this->data['total_desconto'] ?? 0);
+
+    if(isset($this->data['fiscal'])) {
+      if(isset($this->data['fiscal']['aliquota_ibs_estadual'])) {
+        $this->aliquotaIbsEstadual = floatval($this->data['fiscal']['aliquota_ibs_estadual']);
+      }
+
+      if(isset($this->data['fiscal']['aliquota_ibs_municipal'])) {
+        $this->aliquotaIbsMunicipal = floatval($this->data['fiscal']['aliquota_ibs_municipal']);
+      }
+
+      if(isset($this->data['fiscal']['aliquota_cbs'])) {
+        $this->aliquotaCbs = floatval($this->data['fiscal']['aliquota_cbs']);
+      }
+    }
 
     if (isset($data['pagamentos'])) {
       $this->pagamentos = array_map(
@@ -234,6 +253,7 @@ abstract class BaseFiscalController extends Connection
       }
 
       $this->currentXML = $this->nfe->getXML();
+
       $this->currentXML = $this->tools->signNFe($this->currentXML);
 
       $this->response = $this->tools->sefazEnviaLote([$this->currentXML], str_pad(1, 15, '0', STR_PAD_LEFT), 1);
@@ -355,7 +375,8 @@ abstract class BaseFiscalController extends Connection
       "razaosocial" => $this->company->getRazao_social(),
       "siglaUF"     => $this->company->getUf(),
       "cnpj"        => $this->company->getCnpj(),
-      "schemes"     => "PL_009_V4",
+      // "schemes"     => "PL_009_V4",
+      "schemes"     => "PL_010_V1.30",
       "versao"      => '4.00',
       "tokenIBPT"   => "AAAAAAA",
       "CSC"         => $this->csc,
@@ -610,40 +631,6 @@ abstract class BaseFiscalController extends Connection
     $std = new stdClass();
     $std->item = $item;
     $std->vTotTrib = $produto['total'] * (0 / 100);
-
-    return $std;
-  }
-
-  protected function generateIBSData($produto, $item)
-  {
-    $std = new stdClass();
-    $std->item = $item;
-
-    $base = $produto['total']
-      - $produto['desconto']
-      + $produto['frete']
-      + $produto['acrescimo'];
-
-    $std->vBC = number_format($base, 2, '.', '');
-    $std->pIBS = number_format($this->aliquotaIbs, 2, '.', '');
-    $std->vIBS = number_format($base * ($this->aliquotaIbs / 100), 2, '.', '');
-
-    return $std;
-  }
-
-  protected function generateCBSData($produto, $item)
-  {
-    $std = new stdClass();
-    $std->item = $item;
-
-    $base = $produto['total']
-      - $produto['desconto']
-      + $produto['frete']
-      + $produto['acrescimo'];
-
-    $std->vBC = number_format($base, 2, '.', '');
-    $std->pCBS = number_format($this->aliquotaCbs, 2, '.', '');
-    $std->vCBS = number_format($base * ($this->aliquotaCbs / 100), 2, '.', '');
 
     return $std;
   }
