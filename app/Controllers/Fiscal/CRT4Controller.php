@@ -27,10 +27,6 @@ class CRT4Controller extends BaseFiscalController
   {
     $item = $index + 1;
 
-    // IBS e CBS (novos tributos da reforma tributária)
-    $this->nfe->tagIBS($this->generateIBSData($produto, $item));
-    $this->nfe->tagCBS($this->generateCBSData($produto, $item));
-
     // Verificar se é combustível (caso raro para MEI, mas mantido por consistência)
     if (isset($produto['codigo_anp']) && !empty($produto['codigo_anp'])) {
       $this->nfe->tagcomb($this->addCombustivelTag($produto, $index));

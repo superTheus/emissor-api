@@ -2,6 +2,9 @@
 
 require_once './vendor/autoload.php';
 
+// Configura timezone para América/Manaus (UTC-4)
+date_default_timezone_set('America/Manaus');
+
 if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') {
     header('Access-Control-Allow-Origin: *');
     header('Access-Control-Allow-Methods: GET, POST, PATCH, PUT, DELETE, OPTIONS');

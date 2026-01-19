@@ -19,17 +19,13 @@ class CRT1Controller extends BaseFiscalController
   {
     $item = $index + 1;
 
-    // IBS e CBS (novos tributos da reforma tributária)
-    $this->nfe->tagIBS($this->generateIBSData($produto, $item));
-    $this->nfe->tagCBS($this->generateCBSData($produto, $item));
-
     // Verificar se é combustível
     if (isset($produto['codigo_anp']) && !empty($produto['codigo_anp'])) {
       $this->nfe->tagcomb($this->addCombustivelTag($produto, $index));
       $this->nfe->tagICMS($this->addICMSCombTag($produto, $index));
       $this->baseTotalIcms += 1000.00;
     } else {
-      // ICMS do Simples Nacional
+      // ICMS do Simples Nacional (OBRIGATÓRIO)
       $icmssnData = $this->generateIcmssnData($produto, $item);
       $this->nfe->tagICMSSN($icmssnData);
 
@@ -39,9 +35,10 @@ class CRT1Controller extends BaseFiscalController
       }
     }
 
-    // PIS e COFINS simplificados para Simples Nacional
     $this->nfe->tagPIS($this->generatePisDataSimple($produto, $item));
     $this->nfe->tagCOFINS($this->generateConfinsDataSimple($produto, $item));
+
+    $this->nfe->tagIBSCBS($this->generateIBSCBSData($produto, $item));
   }
 
   /**
@@ -131,6 +128,61 @@ class CRT1Controller extends BaseFiscalController
     $std->vBC = number_format($produto['total'], 2, ".", "");
     $std->pPIS = number_format(0, 2, ".", "");
     $std->vPIS = number_format(0, 2, ".", "");
+
+    return $std;
+  }
+
+  protected function generateIBSCBSData(array $produto, int $item)
+  {
+    $std = new stdClass();
+
+    // Obrigatórios
+    $std->item       = $item;
+    $std->CST        = $produto['cst_ibscbs'] ?? '000';
+    $std->cClassTrib = $produto['cclasstrib_ibscbs'] ?? '000001';
+
+    // Base de cálculo
+    $std->vBC = $this->baseCalculo;
+
+    /**
+     * ==============================
+     * IBS - Competência da UF
+     * ==============================
+     */
+    $std->gIBSUF_pIBSUF  = $this->aliquotaIbsEstadual ?? 0.10;
+    $std->gIBSUF_vIBSUF  = number_format(
+      $std->vBC * ($std->gIBSUF_pIBSUF / 100),
+      2,
+      '.',
+      ''
+    );
+
+    /**
+     * ==============================
+     * IBS - Competência do Município
+     * ==============================
+     */
+    $std->gIBSMun_pIBSMun = $this->aliquotaIbsMunicipal ?? 0.00;
+    $std->gIBSMun_vIBSMun = number_format(
+      $std->vBC * ($std->gIBSMun_pIBSMun / 100),
+      2,
+      '.',
+      ''
+    );
+
+    /**
+     * ==============================
+     * CBS - Federal
+     * ==============================
+     */
+    $std->gCBS_pCBS = $this->aliquotaCbs ?? 0.9000;
+    $std->gCBS_vCBS = number_format(
+      $std->vBC * ($std->gCBS_pCBS / 100),
+      2,
+      '.',
+      ''
+    );
+
 
     return $std;
   }
