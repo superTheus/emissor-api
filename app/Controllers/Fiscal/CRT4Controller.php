@@ -114,11 +114,13 @@ class CRT4Controller extends BaseFiscalController
 
   /**
    * Sobrescreve para garantir que o CRT seja 4 na emissão
+   * MEI não possui Inscrição Estadual, portanto deve ser informado "ISENTO"
    */
   protected function generateDataCompany()
   {
     $std = parent::generateDataCompany();
     $std->CRT = '4'; // Força CRT 4 para MEI
+    $std->IE = 'ISENTO'; // MEI não possui IE
 
     return $std;
   }
