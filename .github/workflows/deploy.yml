@@ -1,84 +1,84 @@
-name: Deploy backend on push to master
+# name: Deploy backend on push to master
 
-on:
-  push:
-    branches:
-      - master
+# on:
+#   push:
+#     branches:
+#       - master
 
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
+# jobs:
+#   deploy:
+#     runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout (for logs if needed)
-        uses: actions/checkout@v4
+#     steps:
+#       - name: Checkout (for logs if needed)
+#         uses: actions/checkout@v4
 
-      - name: Start ssh-agent with deploy key
-        uses: webfactory/ssh-agent@v0.9.1
-        with:
-          ssh-private-key: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+#       - name: Start ssh-agent with deploy key
+#         uses: webfactory/ssh-agent@v0.9.1
+#         with:
+#           ssh-private-key: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
 
-      - name: Ensure known_hosts
-        run: |
-          mkdir -p ~/.ssh
-          if [ -n "${{ secrets.KNOWN_HOSTS }}" ]; then
-            echo "${{ secrets.KNOWN_HOSTS }}" > ~/.ssh/known_hosts
-          else
-            ssh-keyscan -p "${{ secrets.DEPLOY_PORT }}" -t ecdsa,ed25519,rsa "${{ secrets.DEPLOY_SERVER }}" >> ~/.ssh/known_hosts
-          fi
-          chmod 600 ~/.ssh/known_hosts
+#       - name: Ensure known_hosts
+#         run: |
+#           mkdir -p ~/.ssh
+#           if [ -n "${{ secrets.KNOWN_HOSTS }}" ]; then
+#             echo "${{ secrets.KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+#           else
+#             ssh-keyscan -p "${{ secrets.DEPLOY_PORT }}" -t ecdsa,ed25519,rsa "${{ secrets.DEPLOY_SERVER }}" >> ~/.ssh/known_hosts
+#           fi
+#           chmod 600 ~/.ssh/known_hosts
 
-      - name: Run git pull on server
-        env:
-          SERVER: ${{ secrets.DEPLOY_SERVER }}
-          USER: ${{ secrets.DEPLOY_USER }}
-          PORT: ${{ secrets.DEPLOY_PORT }}
-          PROJECT_DIR: ${{ secrets.DEPLOY_PROJECT_DIR }}
-          POST_CMDS: ${{ secrets.POST_DEPLOY_COMMANDS }}
-        run: |
-          echo "Connecting to ${USER}@${SERVER}:${PORT} and pulling in ${PROJECT_DIR}"
+#       - name: Run git pull on server
+#         env:
+#           SERVER: ${{ secrets.DEPLOY_SERVER }}
+#           USER: ${{ secrets.DEPLOY_USER }}
+#           PORT: ${{ secrets.DEPLOY_PORT }}
+#           PROJECT_DIR: ${{ secrets.DEPLOY_PROJECT_DIR }}
+#           POST_CMDS: ${{ secrets.POST_DEPLOY_COMMANDS }}
+#         run: |
+#           echo "Connecting to ${USER}@${SERVER}:${PORT} and pulling in ${PROJECT_DIR}"
 
-          # quick connection test (will fail early if SSH not ok)
-          ssh -o StrictHostKeyChecking=yes -p "${PORT}" "${USER}@${SERVER}" "echo 'SSH OK: connected as $(whoami) on $(hostname)'; exit"
+#           # quick connection test (will fail early if SSH not ok)
+#           ssh -o StrictHostKeyChecking=yes -p "${PORT}" "${USER}@${SERVER}" "echo 'SSH OK: connected as $(whoami) on $(hostname)'; exit"
 
-          # Pass PROJECT_DIR and POST_CMDS as positional args to the remote bash
-          ssh -p "${PORT}" "${USER}@${SERVER}" bash -s -- "${PROJECT_DIR}" "${POST_CMDS}" <<'SSH_CMDS'
-          set -e
+#           # Pass PROJECT_DIR and POST_CMDS as positional args to the remote bash
+#           ssh -p "${PORT}" "${USER}@${SERVER}" bash -s -- "${PROJECT_DIR}" "${POST_CMDS}" <<'SSH_CMDS'
+#           set -e
 
-          PROJECT_DIR="$1"
-          POST_CMDS="$2"
-          BRANCH="master"
+#           PROJECT_DIR="$1"
+#           POST_CMDS="$2"
+#           BRANCH="master"
 
-          if [ -z "$PROJECT_DIR" ]; then
-            echo "ERROR: PROJECT_DIR empty"
-            exit 2
-          fi
+#           if [ -z "$PROJECT_DIR" ]; then
+#             echo "ERROR: PROJECT_DIR empty"
+#             exit 2
+#           fi
 
-          if [ ! -d "$PROJECT_DIR" ]; then
-            echo "ERROR: project dir $PROJECT_DIR not found"
-            exit 2
-          fi
+#           if [ ! -d "$PROJECT_DIR" ]; then
+#             echo "ERROR: project dir $PROJECT_DIR not found"
+#             exit 2
+#           fi
 
-          cd "$PROJECT_DIR"
+#           cd "$PROJECT_DIR"
 
-          # fetch & ensure branch exactly equals remote master
-          git reset --hard
-          git config --global --add safe.directory "$PROJECT_DIR"
-          git fetch origin
-          git checkout "${BRANCH}" || git checkout -b "${BRANCH}" origin/${BRANCH}
-          git reset --hard origin/${BRANCH}
-          git clean -fd
-          git pull origin "${BRANCH}"
+#           # fetch & ensure branch exactly equals remote master
+#           git reset --hard
+#           git config --global --add safe.directory "$PROJECT_DIR"
+#           git fetch origin
+#           git checkout "${BRANCH}" || git checkout -b "${BRANCH}" origin/${BRANCH}
+#           git reset --hard origin/${BRANCH}
+#           git clean -fd
+#           git pull origin "${BRANCH}"
 
-          echo "Last commit on server:"
-          git --no-pager log -1 --pretty=format:"%h %s (%ci) by %an"
+#           echo "Last commit on server:"
+#           git --no-pager log -1 --pretty=format:"%h %s (%ci) by %an"
 
-          if [ -n "$POST_CMDS" ]; then
-            echo "Running post-deploy commands..."
-            eval "$POST_CMDS"
-          else
-            echo "No post-deploy commands provided."
-          fi
+#           if [ -n "$POST_CMDS" ]; then
+#             echo "Running post-deploy commands..."
+#             eval "$POST_CMDS"
+#           else
+#             echo "No post-deploy commands provided."
+#           fi
 
-          exit 0
-          SSH_CMDS
+#           exit 0
+#           SSH_CMDS

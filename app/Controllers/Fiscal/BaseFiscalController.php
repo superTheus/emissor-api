@@ -10,6 +10,7 @@ use App\Models\FormaPagamentoModel;
 use Dotenv\Dotenv;
 use NFePHP\Common\Certificate;
 use NFePHP\Common\Keys;
+use NFePHP\DA\NFe\Daevento;
 use NFePHP\DA\NFe\Danfe;
 use NFePHP\NFe\Common\Standardize;
 use NFePHP\NFe\Complements;
@@ -66,12 +67,9 @@ abstract class BaseFiscalController extends Connection
     $dotenv->load();
 
     try {
-      // Permite instanciar sem o payload completo (ex.: cancelamento/CCe).
-      // Para emissão, o payload completo será processado via initializeFromData.
       if ($data) {
         $this->data = $data;
 
-        // Só inicializa para emissão se houver estrutura mínima de emissão.
         if (isset($data['cliente']) && isset($data['produtos']) && isset($data['cnpj'])) {
           $this->initializeFromData($data);
         }
@@ -152,16 +150,16 @@ abstract class BaseFiscalController extends Connection
 
     $this->baseCalculo = floatval($this->data['total'] ?? 0) + floatval($this->data['total_acrescimo'] ?? 0) + floatval($this->data['total_frete'] ?? 0) - floatval($this->data['total_desconto'] ?? 0);
 
-    if(isset($this->data['fiscal'])) {
-      if(isset($this->data['fiscal']['aliquota_ibs_estadual'])) {
+    if (isset($this->data['fiscal'])) {
+      if (isset($this->data['fiscal']['aliquota_ibs_estadual'])) {
         $this->aliquotaIbsEstadual = floatval($this->data['fiscal']['aliquota_ibs_estadual']);
       }
 
-      if(isset($this->data['fiscal']['aliquota_ibs_municipal'])) {
+      if (isset($this->data['fiscal']['aliquota_ibs_municipal'])) {
         $this->aliquotaIbsMunicipal = floatval($this->data['fiscal']['aliquota_ibs_municipal']);
       }
 
-      if(isset($this->data['fiscal']['aliquota_cbs'])) {
+      if (isset($this->data['fiscal']['aliquota_cbs'])) {
         $this->aliquotaCbs = floatval($this->data['fiscal']['aliquota_cbs']);
       }
     }
@@ -325,43 +323,104 @@ abstract class BaseFiscalController extends Connection
    */
   public function gerarCC($data)
   {
+    if (!isset($data['cnpj']) || empty($data['cnpj'])) {
+      http_response_code(400);
+      echo json_encode([
+        "error" => "CNPJ não informado"
+      ]);
+      return;
+    }
+
+    if ($this->bootstrapCompanyAndToolsByCnpj($data['cnpj']) === false) {
+      http_response_code(404);
+      echo json_encode([
+        "error" => "Empresa não encontrada"
+      ]);
+      return;
+    }
+
+    $chaveNFe = $data['chave'];
+    $correcao = $data['carta'];
+
+    // Busca a emissão original
+    $emissoesModel = new EmissoesModel($data['chave']);
+    $emissao = $emissoesModel->getCurrent();
+
+    if (!$emissao) {
+      http_response_code(404);
+      echo json_encode(['error' => 'NFe não encontrada']);
+      return;
+    }
+
+    $grupoCorrecao = ($emissao->sequencia_cc ?? 0) + 1;
+
+    // Envia a CC-e para a SEFAZ
+    $response = $this->tools->sefazCCe($chaveNFe, $correcao, $grupoCorrecao);
+
+    $stdCl = new Standardize();
+    $std = $stdCl->toStd($response);
+
+    if (!in_array($std->cStat, ['135', '136', '128'])) {
+      http_response_code(400);
+      echo json_encode([
+        'error' => 'Erro ao processar CC-e',
+        'codigo' => $std->cStat,
+        'motivo' => $std->xMotivo
+      ]);
+      return;
+    }
+
+    $xmlEnviado = $this->tools->lastRequest;
+    $xmlProtocolado = Complements::toAuthorize($xmlEnviado, $response);
+
+    $emissoesModel->setSequencia_cc($grupoCorrecao);
+    $emissoesModel->update();
+
+    $protocolo = isset($std->retEvento->infEvento->nProt) ? $std->retEvento->infEvento->nProt : '';
+
+    // Gera o PDF da Carta de Correção
     try {
-      if (!isset($data['cnpj']) || empty($data['cnpj'])) {
-        http_response_code(400);
-        echo json_encode([
-          "error" => "CNPJ não informado"
-        ]);
-        return;
-      }
+      $dadosEmitente = [
+        'CNPJ' => $this->company->getCnpj(),
+        'razao' => $this->company->getRazao_social(),
+        'logradouro' => $this->company->getLogradouro(),
+        'numero' => $this->company->getNumero(),
+        'bairro' => $this->company->getBairro(),
+        'CEP' => $this->company->getCep(),
+        'municipio' => $this->company->getCidade(),
+        'UF' => $this->company->getUf(),
+        'telefone' => $this->company->getTelefone(),
+        'email' => $this->company->getEmail()
+      ];
 
-      if ($this->bootstrapCompanyAndToolsByCnpj($data['cnpj']) === false) {
-        http_response_code(404);
-        echo json_encode([
-          "error" => "Empresa não encontrada"
-        ]);
-        return;
-      }
+      $daccePdf = new Daevento($xmlProtocolado, $dadosEmitente);
+      $pdfCCe = $daccePdf->render();
 
-      $chaveNFe = $data['chave'];
-      $correcao = $data['carta'];
-
-      $emissoesController = new EmissoesModel($data['chave']);
-      $grupoCorrecao = $emissoesController->getCurrent()->sequencia_cc;
-
-      $emissoesController->setSequencia_cc($grupoCorrecao + 1);
-      $emissoesController->update();
-
-      $response = $this->tools->sefazCCe($chaveNFe, $correcao, $grupoCorrecao);
+      $nomePdfCCe = "cce_{$chaveNFe}_seq{$grupoCorrecao}";
+      $link = UtilsController::uploadPdf($pdfCCe, $nomePdfCCe);
 
       http_response_code(200);
       echo json_encode([
-        "status" => "success",
-        "message" => "Carta de correção gerada com sucesso!",
-        "response" => $response
+        'chave' => $chaveNFe,
+        'avisos' => [],
+        'protocolo' => $protocolo,
+        'sequencia' => $grupoCorrecao,
+        'link' => $_ENV['URL_BASE'] . $link,
+        'xml' => $xmlProtocolado,
+        'pdf' => base64_encode($pdfCCe)
       ]);
     } catch (\Exception $e) {
-      http_response_code(500);
-      echo json_encode(['error' => $e->getMessage()]);
+      // Se falhar ao gerar o PDF, retorna sem o PDF mas com sucesso no evento
+      http_response_code(200);
+      echo json_encode([
+        'chave' => $chaveNFe,
+        'avisos' => ['Erro ao gerar PDF: ' . $e->getMessage()],
+        'protocolo' => $protocolo,
+        'sequencia' => $grupoCorrecao,
+        'link' => '',
+        'xml' => $xmlProtocolado,
+        'pdf' => ''
+      ]);
     }
   }
 
@@ -456,7 +515,7 @@ abstract class BaseFiscalController extends Connection
     $std->CEP = $this->company->getCep();
     $std->cPais = '1058';
     $std->xPais = 'BRASIL';
-    $std->fone = $this->company->getTelefone();
+    $std->fone = UtilsController::soNumero($this->company->getTelefone());
 
     return $std;
   }
