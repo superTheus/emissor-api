@@ -5,6 +5,7 @@ namespace App\Controllers\Fiscal;
 use App\Controllers\UtilsController;
 use App\Models\CompanyModel;
 use App\Models\Connection;
+use App\Models\EmissoesEventosModel;
 use App\Models\EmissoesModel;
 use App\Models\FormaPagamentoModel;
 use Dotenv\Dotenv;
@@ -284,6 +285,30 @@ abstract class BaseFiscalController extends Connection
         return;
       }
 
+      if (!isset($data['chave']) || empty($data['chave'])) {
+        http_response_code(400);
+        echo json_encode([
+          "error" => "Chave da NFe não informada"
+        ]);
+        return;
+      }
+
+      if (!isset($data['justificativa']) || empty($data['justificativa'])) {
+        http_response_code(400);
+        echo json_encode([
+          "error" => "Justificativa não informada"
+        ]);
+        return;
+      }
+
+      if (strlen($data['justificativa']) < 15) {
+        http_response_code(400);
+        echo json_encode([
+          "error" => "Justificativa deve ter no mínimo 15 caracteres"
+        ]);
+        return;
+      }
+
       if ($this->bootstrapCompanyAndToolsByCnpj($data['cnpj']) === false) {
         http_response_code(404);
         echo json_encode([
@@ -300,10 +325,32 @@ abstract class BaseFiscalController extends Connection
       $std = $stdCl->toStd($response);
 
       if ($std->cStat == 128 || $std->cStat == 135) {
+        $xmlProtocolado = Complements::toAuthorize($this->tools->lastRequest, $response);
+        $std = new Standardize($xmlProtocolado);
+        $obj = $std->toStd();
+        $protocoloCancelamento = $obj->retEvento->infEvento->nProt;
+
+        $danfe = new Danfe($emissao->xml);
+        $danfe->setCancelFlag(true);
+        $pdf = $danfe->render();
+        $link = UtilsController::uploadPdf($pdf, $emissao->chave);
+
+        $this->salvarEvento([
+          "chave" => $emissao->chave,
+          "tipo" => "CANCELAMENTO",
+          "link" => $link,
+          "xml" => $xmlProtocolado,
+          "protocolo" => $protocoloCancelamento
+        ]);
+
         http_response_code(200);
         echo json_encode([
-          "status" => "success",
-          "message" => "Cancelamento homologado com sucesso!"
+          "chave" => $emissao->chave,
+          "avisos" => [],
+          "protocolo" => $protocoloCancelamento,
+          "link" => $_ENV['URL_BASE'] . $link,
+          "xml" => $emissao->xml,
+          "pdf" => base64_encode($pdf)
         ]);
       } else {
         http_response_code(403);
@@ -398,6 +445,14 @@ abstract class BaseFiscalController extends Connection
 
       $nomePdfCCe = "cce_{$chaveNFe}_seq{$grupoCorrecao}";
       $link = UtilsController::uploadPdf($pdfCCe, $nomePdfCCe);
+
+      $this->salvarEvento([
+        "chave" => $chaveNFe,
+        "tipo" => "CC",
+        "link" => $link,
+        "xml" => $xmlProtocolado,
+        "protocolo" => $protocolo
+      ]);
 
       http_response_code(200);
       echo json_encode([
@@ -1017,5 +1072,15 @@ abstract class BaseFiscalController extends Connection
   public function getTools()
   {
     return $this->tools;
+  }
+
+  private function salvarEvento($data) {
+    $emissoesEventosModel = new EmissoesEventosModel();
+    $emissoesEventosModel->setChave($data['chave']);
+    $emissoesEventosModel->setTipo($data['tipo']);
+    $emissoesEventosModel->setLink($data['link']);
+    $emissoesEventosModel->setXml($data['xml']);
+    $emissoesEventosModel->setProtocolo($data['protocolo']);
+    $emissoesEventosModel->create();
   }
 }

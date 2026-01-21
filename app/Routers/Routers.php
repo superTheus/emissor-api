@@ -90,7 +90,7 @@ class Routers
 
         $router->post('/cancel', function () {
           $data = json_decode(file_get_contents('php://input'), true);
-          $cupomfiscalController = new FiscalController();
+          $cupomfiscalController = new FiscalController($data);
           $cupomfiscalController->cancelNfe($data);
         });
 
