@@ -236,7 +236,7 @@ class Routers
         $municipiosController = new MunicipiosController();
 
         $estadosController = new EstadosController();
-        $estado = $estadosController->find([
+        $estado = $estadosController->findOnly([
           "filter" => [
             "uf" => $uf
           ],
@@ -252,7 +252,7 @@ class Routers
         $municipiosController->findunique([
           "filter" => [
             "nome" => $cidade,
-            "id_estado" => $estado[0]['id']
+            "id_estado" => $estado['id']
           ]
         ]);
       });
