@@ -241,7 +241,9 @@ abstract class BaseFiscalController extends Connection
       }
 
       $this->nfe->tagICMSTot($this->generateIcmsTot());
-      $this->nfe->taginfAdic($this->generateIcmsInfo($this->data));
+      if (isset($this->data['observacao']) && !empty(trim($this->data['observacao']))) {
+        $this->nfe->taginfAdic($this->generateIcmsInfo($this->data));
+      }
       $this->nfe->taginfRespTec($this->generateReponsavelTecnico());
       $this->nfe->tagtransp($this->generateFreteData());
       $this->nfe->tagpag($this->generateFaturaData());
