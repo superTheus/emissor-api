@@ -42,9 +42,8 @@ class EmissoesController
       return;
     }
 
-    $certs = UtilsController::openCertificate($certificadoDecodificado, $senha);
-    
-    if (!$certs) {
+    $certs = [];
+    if (!openssl_pkcs12_read($certificadoDecodificado, $certs, $senha)) {
       http_response_code(400);
       echo json_encode([
         'error' => 'Senha incorreta ou certificado inválido.',
@@ -55,16 +54,16 @@ class EmissoesController
     }
 
     $certificado = openssl_x509_parse($certs['cert']);
-    
+
     if ($certificado === false) {
       http_response_code(400);
       echo json_encode(['error' => 'Não foi possível analisar o certificado.']);
       return;
     }
-    
+
     $validadeInicio = $certificado['validFrom_time_t'];
     $validadeFim = $certificado['validTo_time_t'];
-    $tempoAtual = time();  
+    $tempoAtual = time();
 
     if ($tempoAtual < $validadeInicio || $tempoAtual > $validadeFim) {
       http_response_code(400);

@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Controllers\Fiscal;
+namespace App\Controllers\CupomFiscal;
 
 use App\Controllers\UtilsController;
 use App\Models\CompanyModel;
@@ -11,7 +11,7 @@ use App\Models\FormaPagamentoModel;
 use Dotenv\Dotenv;
 use NFePHP\Common\Certificate;
 use NFePHP\Common\Keys;
-use NFePHP\DA\NFe\Daevento;
+use NFePHP\DA\NFe\Danfce;
 use NFePHP\DA\NFe\Danfe;
 use NFePHP\NFe\Common\Standardize;
 use NFePHP\NFe\Complements;
@@ -20,10 +20,10 @@ use NFePHP\NFe\Tools;
 use stdClass;
 
 /**
- * Classe base abstrata para emissão de NFe
+ * Classe base abstrata para emissão de NFC-e (Cupom Fiscal Eletrônico)
  * Contém toda a lógica comum compartilhada entre os diferentes regimes tributários
  */
-abstract class BaseFiscalController extends Connection
+abstract class BaseCupomFiscalController extends Connection
 {
   protected $nfe;
   protected $tools;
@@ -45,7 +45,6 @@ abstract class BaseFiscalController extends Connection
   protected $pagamentos = [];
   protected $baseCalculo = 0;
   protected $baseTotalIcms = 0;
-  protected $origem = 0;
   protected $totalIcms = 0;
   protected $valorIcms = 0;
   protected $data;
@@ -54,13 +53,8 @@ abstract class BaseFiscalController extends Connection
   protected $currentData;
   protected $warnings = [];
   protected $response;
-  protected $mod = 55;
-  protected $tipoCliente = 'PJ';
-  protected $indIEDest = 9;
-  protected $aliquotaIbsEstadual = 0.00;
-  protected $aliquotaIbsMunicipal = 0.00;
-  protected $aliquotaCbs = 0.00;
-
+  protected $mod = 65;
+  protected $origem = 0;
 
   public function __construct($data = null)
   {
@@ -71,7 +65,7 @@ abstract class BaseFiscalController extends Connection
       if ($data) {
         $this->data = $data;
 
-        if (isset($data['cliente']) && isset($data['produtos']) && isset($data['cnpj'])) {
+        if (isset($data['produtos']) && isset($data['cnpj'])) {
           $this->initializeFromData($data);
         }
       }
@@ -84,7 +78,6 @@ abstract class BaseFiscalController extends Connection
 
   /**
    * Carrega a empresa, configura ambiente/serie/numero/CSC e inicializa Tools.
-   * Retorna false caso a empresa não seja encontrada.
    */
   protected function bootstrapCompanyAndToolsByCnpj($cnpj)
   {
@@ -99,16 +92,14 @@ abstract class BaseFiscalController extends Connection
 
     $this->company = new CompanyModel($company[0]['id']);
     $this->ambiente = intval($this->company->getTpamb()) > 0 ? $this->company->getTpamb() : 1;
-    $this->serie = $this->company->getTpamb() === 1 ? $this->company->getSerie_nfe() : $this->company->getSerie_nfe_homologacao();
-    $this->numero = $this->company->getTpamb() === 1 ? $this->company->getNumero_nfe() : $this->company->getNumero_nfe_homologacao();
+    $this->serie = $this->company->getTpamb() === 1 ? $this->company->getSerie_nfce() : $this->company->getSerie_nfce_homologacao();
+    $this->numero = $this->company->getTpamb() === 1 ? $this->company->getNumero_nfce() : $this->company->getNumero_nfce_homologacao();
     $this->csc = $this->company->getTpamb() === 1 ? $this->company->getCsc() : $this->company->getCsc_homologacao();
     $this->csc_id = $this->company->getTpamb() === 1 ? $this->company->getCsc_id() : $this->company->getCsc_id_homologacao();
     $this->certificado = UtilsController::getCertificado($this->company->getCertificado());
     $this->config = $this->setConfig();
 
-    // Para emissão, dataEmissao é relevante; para cancelamento/CCe, não atrapalha.
     if (empty($this->dataEmissao)) {
-      // Usa a data/hora atual do servidor com timezone configurado
       $this->dataEmissao = (new \DateTime('now'))->format('Y-m-d\TH:i:sP');
     }
 
@@ -119,57 +110,26 @@ abstract class BaseFiscalController extends Connection
   }
 
   /**
-   * Inicializa o controller com os dados recebidos
+   * Inicializa os dados do cupom fiscal a partir do array de entrada
    */
   protected function initializeFromData($data)
   {
-    $this->tipoCliente = $data['cliente']['tipo_documento'] === 'CPF' ? 'PF' : 'PJ';
-
-    if ($this->tipoCliente === 'PF') {
-      $this->indIEDest = 9;
-    }
-
-    if ($this->tipoCliente === 'PJ') {
-      $this->indIEDest = isset($data['cliente']['inscricao_estadual']) && !empty($data['cliente']['inscricao_estadual']) ?
-        $data['cliente']['tipo_icms'] ?? 1
-        : 9;
-    }
-
-    $this->nfe = new Make(10);
+    $this->nfe = new Make();
     $this->data = $data;
 
     if (!isset($data['cnpj']) || empty($data['cnpj'])) {
-      throw new \Exception('CNPJ da empresa não informado');
+      throw new \Exception("CNPJ não informado");
     }
 
-    if ($this->bootstrapCompanyAndToolsByCnpj($data['cnpj']) === false) {
-      throw new \Exception('Empresa não encontrada');
-    }
+    $this->bootstrapCompanyAndToolsByCnpj($data['cnpj']);
 
     $this->modo_emissao = isset($data['modoEmissao']) ? $data['modoEmissao'] : 1;
     $this->produtos = isset($data['produtos']) ? $data['produtos'] : [];
-
-    $this->baseCalculo = floatval($this->data['total'] ?? 0) + floatval($this->data['total_acrescimo'] ?? 0) + floatval($this->data['total_frete'] ?? 0) - floatval($this->data['total_desconto'] ?? 0);
-
-    if (isset($this->data['fiscal'])) {
-      if (isset($this->data['fiscal']['aliquota_ibs_estadual'])) {
-        $this->aliquotaIbsEstadual = floatval($this->data['fiscal']['aliquota_ibs_estadual']);
-      }
-
-      if (isset($this->data['fiscal']['aliquota_ibs_municipal'])) {
-        $this->aliquotaIbsMunicipal = floatval($this->data['fiscal']['aliquota_ibs_municipal']);
-      }
-
-      if (isset($this->data['fiscal']['aliquota_cbs'])) {
-        $this->aliquotaCbs = floatval($this->data['fiscal']['aliquota_cbs']);
-      }
-    }
 
     if (isset($data['pagamentos'])) {
       $this->pagamentos = array_map(
         function ($pagamento) {
           $formaPagamentoModel = new FormaPagamentoModel($pagamento['codigo']);
-
           return [
             "indPag"    => $formaPagamentoModel->getCurrent()->cod_meio,
             "tPag"      => $formaPagamentoModel->getCurrent()->codigo,
@@ -182,48 +142,48 @@ abstract class BaseFiscalController extends Connection
       $this->pagamentos = [];
     }
 
-    if ($this->conexaoSefaz() === false) {
-      $this->modo_emissao = 9;
-      array_push($this->warnings, "Não foi possível se conectar com a SEFAZ, a nota será emitida em modo de contingência");
-    }
-
     $this->montaChave();
   }
 
   /**
-   * Método abstrato para processamento dos impostos específicos de cada regime
-   * Cada controller filho deve implementar sua própria lógica
+   * Método abstrato que deve ser implementado em cada CRT
+   * Responsável por processar os impostos específicos de cada regime
    */
   abstract protected function processarImpostosProduto($produto, $index);
 
   /**
-   * Cria a NFe chamando o método abstrato de impostos para cada produto
+   * Cria e emite a NFC-e
    */
   public function createNfe()
   {
-    if (empty($this->data) || !isset($this->data['cnpj']) || !isset($this->data['cliente'])) {
-      http_response_code(400);
-      echo json_encode(['error' => 'Payload inválido para emissão de NFe']);
-      return;
-    }
-
     try {
+      if (empty($this->produtos)) {
+        throw new \Exception("Nenhum produto informado para emissão da NFC-e");
+      }
+
+      if (empty($this->pagamentos)) {
+        throw new \Exception("Nenhuma forma de pagamento informada para emissão da NFC-e");
+      }
+
       $std = new stdClass();
       $std->versao = '4.00';
       $this->nfe->taginfNFe($std);
       $this->nfe->tagide($this->generateIdeData($this->data));
       $this->nfe->tagemit($this->generateDataCompany());
       $this->nfe->tagenderEmit($this->generateDataAddress());
-      $this->nfe->tagdest($this->generateClientData($this->data));
-      $this->nfe->tagenderDest($this->generateClientAddressData($this->data['cliente']['endereco']));
 
-      $this->baseTotalIcms = 0;
-      $this->totalIcms = 0;
-      $this->total_produtos = 0;
+      if (isset($this->data['cliente']) && !empty($this->data['cliente']) && strtoupper($this->data['cliente']['nome']) !== 'CONSUMIDOR FINAL') {
+        $this->nfe->tagdest($this->generateClientData($this->data));
+        if (isset($this->data['cliente']['endereco']) && !empty($this->data['cliente']['endereco'])) {
+          $this->nfe->tagenderDest($this->generateClientAddressData($this->data['cliente']['endereco']));
+        }
+      }
 
       foreach ($this->produtos as $index => $produto) {
-        $this->baseCalculo = ($produto['total'] - $produto['desconto'] + $produto['frete'] + $produto['acrescimo']);
-        $this->origem = $produto['origem'];
+        $desconto = isset($produto['desconto']) ? floatval($produto['desconto']) : 0;
+        $frete = isset($produto['frete']) ? floatval($produto['frete']) : 0;
+        $acrescimo = isset($produto['acrescimo']) ? floatval($produto['acrescimo']) : 0;
+        $this->baseCalculo = max(0, floatval($produto['total']) - $desconto + $frete + $acrescimo);
         $this->valorIcms = 0;
 
         $this->nfe->tagprod($this->generateProductData($produto, $index + 1));
@@ -233,26 +193,22 @@ abstract class BaseFiscalController extends Connection
         }
 
         $this->nfe->tagimposto($this->generateImpostoData($produto, $index + 1));
-
-        // Método abstrato - cada regime implementa sua própria lógica
         $this->processarImpostosProduto($produto, $index);
 
         $this->totalIcms += number_format($this->valorIcms, 2, ".", "");
       }
 
       $this->nfe->tagICMSTot($this->generateIcmsTot());
-      $this->nfe->taginfAdic($this->generateIcmsInfo($this->data));
+      $this->nfe->taginfAdic($this->generateIcmsInfo());
       $this->nfe->taginfRespTec($this->generateReponsavelTecnico());
       $this->nfe->tagtransp($this->generateFreteData());
       $this->nfe->tagpag($this->generateFaturaData());
-      $this->nfe->tagautXML($this->generateAutXMLData($this->data));
 
       foreach ($this->pagamentos as $pagamento) {
         $this->nfe->tagdetPag($this->generatePagamentoData($pagamento));
       }
 
       $this->currentXML = $this->nfe->getXML();
-
       $this->currentXML = $this->tools->signNFe($this->currentXML);
 
       $this->response = $this->tools->sefazEnviaLote([$this->currentXML], str_pad(1, 15, '0', STR_PAD_LEFT), 1);
@@ -266,7 +222,8 @@ abstract class BaseFiscalController extends Connection
       echo json_encode([
         'error' => $e->getMessage(),
         "error_tags" => $this->nfe->getErrors(),
-        "xml" => $this->nfe->getXML()
+        "xml" => $this->currentXML,
+        "csc" => $this->csc,
       ]);
     }
   }
@@ -274,7 +231,7 @@ abstract class BaseFiscalController extends Connection
   /**
    * Cancela uma NFe
    */
-  public function cancelNfe($data)
+  public function cancelNfce($data)
   {
     try {
       if (!isset($data['cnpj']) || empty($data['cnpj'])) {
@@ -330,9 +287,10 @@ abstract class BaseFiscalController extends Connection
         $obj = $std->toStd();
         $protocoloCancelamento = $obj->retEvento->infEvento->nProt;
 
-        $danfe = new Danfe($emissao->xml);
-        $danfe->setCancelFlag(true);
-        $pdf = $danfe->render();
+        $danfce = new Danfce($emissao->xml);
+        $danfce->setPaperWidth(80);
+        $danfce->setCancelFlag(true);
+        $pdf = $danfce->render();
         $link = UtilsController::uploadPdf($pdf, "cancel_" . $emissao->chave);
 
         $this->salvarEvento([
@@ -365,120 +323,6 @@ abstract class BaseFiscalController extends Connection
     }
   }
 
-  /**
-   * Gera carta de correção
-   */
-  public function gerarCC($data)
-  {
-    if (!isset($data['cnpj']) || empty($data['cnpj'])) {
-      http_response_code(400);
-      echo json_encode([
-        "error" => "CNPJ não informado"
-      ]);
-      return;
-    }
-
-    if ($this->bootstrapCompanyAndToolsByCnpj($data['cnpj']) === false) {
-      http_response_code(404);
-      echo json_encode([
-        "error" => "Empresa não encontrada"
-      ]);
-      return;
-    }
-
-    $chaveNFe = $data['chave'];
-    $correcao = $data['carta'];
-
-    // Busca a emissão original
-    $emissoesModel = new EmissoesModel($data['chave']);
-    $emissao = $emissoesModel->getCurrent();
-
-    if (!$emissao) {
-      http_response_code(404);
-      echo json_encode(['error' => 'NFe não encontrada']);
-      return;
-    }
-
-    $grupoCorrecao = ($emissao->sequencia_cc ?? 0) + 1;
-
-    // Envia a CC-e para a SEFAZ
-    $response = $this->tools->sefazCCe($chaveNFe, $correcao, $grupoCorrecao);
-
-    $stdCl = new Standardize();
-    $std = $stdCl->toStd($response);
-
-    if (!in_array($std->cStat, ['135', '136', '128'])) {
-      http_response_code(400);
-      echo json_encode([
-        'error' => 'Erro ao processar CC-e',
-        'codigo' => $std->cStat,
-        'motivo' => $std->xMotivo
-      ]);
-      return;
-    }
-
-    $xmlEnviado = $this->tools->lastRequest;
-    $xmlProtocolado = Complements::toAuthorize($xmlEnviado, $response);
-
-    $emissoesModel->setSequencia_cc($grupoCorrecao);
-    $emissoesModel->update();
-
-    $protocolo = isset($std->retEvento->infEvento->nProt) ? $std->retEvento->infEvento->nProt : '';
-
-    // Gera o PDF da Carta de Correção
-    try {
-      $dadosEmitente = [
-        'CNPJ' => $this->company->getCnpj(),
-        'razao' => $this->company->getRazao_social(),
-        'logradouro' => $this->company->getLogradouro(),
-        'numero' => $this->company->getNumero(),
-        'bairro' => $this->company->getBairro(),
-        'CEP' => $this->company->getCep(),
-        'municipio' => $this->company->getCidade(),
-        'UF' => $this->company->getUf(),
-        'telefone' => $this->company->getTelefone(),
-        'email' => $this->company->getEmail()
-      ];
-
-      $daccePdf = new Daevento($xmlProtocolado, $dadosEmitente);
-      $pdfCCe = $daccePdf->render();
-
-      $nomePdfCCe = "cce_{$chaveNFe}_seq{$grupoCorrecao}";
-      $link = UtilsController::uploadPdf($pdfCCe, $nomePdfCCe);
-
-      $this->salvarEvento([
-        "chave" => $chaveNFe,
-        "tipo" => "CC",
-        "link" => $link,
-        "xml" => $xmlProtocolado,
-        "protocolo" => $protocolo
-      ]);
-
-      http_response_code(200);
-      echo json_encode([
-        'chave' => $chaveNFe,
-        'avisos' => [],
-        'protocolo' => $protocolo,
-        'sequencia' => $grupoCorrecao,
-        'link' => $_ENV['URL_BASE'] . $link,
-        'xml' => $xmlProtocolado,
-        'pdf' => base64_encode($pdfCCe)
-      ]);
-    } catch (\Exception $e) {
-      // Se falhar ao gerar o PDF, retorna sem o PDF mas com sucesso no evento
-      http_response_code(200);
-      echo json_encode([
-        'chave' => $chaveNFe,
-        'avisos' => ['Erro ao gerar PDF: ' . $e->getMessage()],
-        'protocolo' => $protocolo,
-        'sequencia' => $grupoCorrecao,
-        'link' => '',
-        'xml' => $xmlProtocolado,
-        'pdf' => ''
-      ]);
-    }
-  }
-
   // ==================== MÉTODOS DE CONFIGURAÇÃO ====================
 
   protected function setConfig()
@@ -489,8 +333,7 @@ abstract class BaseFiscalController extends Connection
       "razaosocial" => $this->company->getRazao_social(),
       "siglaUF"     => $this->company->getUf(),
       "cnpj"        => $this->company->getCnpj(),
-      // "schemes"     => "PL_009_V4",
-      "schemes"     => "PL_010_V1.30",
+      "schemes"     => "PL_009_V4",
       "versao"      => '4.00',
       "tokenIBPT"   => "AAAAAAA",
       "CSC"         => $this->csc,
@@ -510,8 +353,6 @@ abstract class BaseFiscalController extends Connection
 
   protected function generateIdeData($data)
   {
-    $ufCliente = $data['cliente']['endereco']['uf'];
-
     $std = new stdClass();
     $std->cUF = $this->company->getCodigo_uf();
     $std->cNF = str_pad((date('Y') . 100), 8, '0', STR_PAD_LEFT);
@@ -523,20 +364,15 @@ abstract class BaseFiscalController extends Connection
     $std->indPag = 0;
     $std->dhSaiEnt = null;
     $std->tpNF = UtilsController::verificarOperacaoPorCFOP($data['cfop']);
-    $std->idDest = strtoupper($ufCliente) === strtoupper($this->company->getUf()) ? 1 : 2;
+    $std->idDest = 1;
     $std->cMunFG = $this->company->getCodigo_municipio();
-    $std->tpImp = 1;
+    $std->tpImp = 4;
     $std->tpEmis = $this->modo_emissao;
     $std->cDV = mb_substr($this->currentChave, -1);
     $std->tpAmb = $this->ambiente;
     $std->finNFe = 1;
-    $std->indFinal = isset($data['consumidor_final']) && $data['consumidor_final'] === 'S' ? 1 : 0;
-
-    if ($this->tipoCliente === 'PF') {
-      $std->indFinal = 1;
-    }
-
-    $std->indPres = 1;
+    $std->indFinal = 1;
+    $std->indPres = 1; // Operação presencial
     $std->procEmi = 0;
     $std->verProc = 1;
     $std->dhCont = null;
@@ -551,8 +387,10 @@ abstract class BaseFiscalController extends Connection
     $std->xNome = $this->company->getRazao_social();
     $std->xFant = $this->company->getNome_fantasia();
     $std->IE = $this->company->getInscricao_estadual();
-    $std->CNAE = $this->company->getCnae();
-    $std->CRT = $this->company->getCrt();
+    if (!empty($this->company->getCnae())) {
+      $std->CNAE = $this->company->getCnae();
+    }
+    $std->CRT = $this->company->getCrt() ?? 1;
     $std->CNPJ = $this->company->getCnpj();
 
     return $std;
@@ -568,9 +406,9 @@ abstract class BaseFiscalController extends Connection
     $std->xMun = $this->company->getCidade();
     $std->UF = $this->company->getUf();
     $std->CEP = $this->company->getCep();
+    $std->fone = UtilsController::soNumero($this->company->getTelefone());
     $std->cPais = '1058';
     $std->xPais = 'BRASIL';
-    $std->fone = UtilsController::soNumero($this->company->getTelefone());
 
     return $std;
   }
@@ -578,6 +416,8 @@ abstract class BaseFiscalController extends Connection
   protected function generateClientData($data)
   {
     $std = new stdClass();
+    // NFC-e é sempre para consumidor final (indIEDest = 9)
+    $std->indIEDest = 9;
 
     if (isset($data['cliente']) && !empty($data['cliente'])) {
       $cliente = $data['cliente'];
@@ -585,7 +425,6 @@ abstract class BaseFiscalController extends Connection
       if (strtoupper($cliente['nome']) === 'CONSUMIDOR FINAL') {
         $std->xNome = "Consumidor Final";
         $std->CPF = '00000000000';
-        $std->indIEDest = 9;
         return $std;
       }
 
@@ -593,89 +432,15 @@ abstract class BaseFiscalController extends Connection
 
       if ($cliente['tipo_documento'] === 'CPF') {
         $std->CPF = UtilsController::soNumero($cliente['documento']);
-        $std->indIEDest = $this->indIEDest;
-        return $std;
-      }
-
-      $std->CNPJ = UtilsController::soNumero($cliente['documento']);
-
-      $ieInfo = $this->resolveIndIEDest($cliente);
-      $std->indIEDest = $ieInfo['indIEDest'];
-
-      if ($ieInfo['indIEDest'] === 1 && !empty($ieInfo['IE'])) {
-        $std->IE = $ieInfo['IE'];
+      } else {
+        $std->CNPJ = UtilsController::soNumero($cliente['documento']);
       }
     } else {
       $std->xNome = "Consumidor Final";
       $std->CPF = (new UtilsController)->gerarCpfValido();
-      $std->indIEDest = 9;
     }
 
     return $std;
-  }
-
-  /**
-   * Resolve o indIEDest baseado nas informações do cliente
-   */
-  protected function resolveIndIEDest($cliente)
-  {
-    $result = [
-      'indIEDest' => 9,
-      'IE' => null
-    ];
-
-    if (!isset($cliente['inscricao_estadual']) || empty($cliente['inscricao_estadual'])) {
-      return $result;
-    }
-
-    $ie = trim(strtoupper($cliente['inscricao_estadual']));
-    $isIsentoTexto = in_array($ie, ['ISENTO', 'ISENTA', 'ISENT', 'IS', 'ISNT', '']);
-
-    if (isset($cliente['tipo_icms'])) {
-      $tipoIcms = strtoupper(trim($cliente['tipo_icms']));
-
-      switch ($tipoIcms) {
-        case '1':
-        case 'CONTRIBUINTE':
-          $ieNumerico = UtilsController::soNumero($ie);
-          if (!empty($ieNumerico) && strlen($ieNumerico) >= 2) {
-            $result['indIEDest'] = 1;
-            $result['IE'] = $ieNumerico;
-          } else {
-            $result['indIEDest'] = 9;
-          }
-          break;
-
-        case '2':
-        case 'ISENTO':
-        case 'ISENTA':
-          $result['indIEDest'] = 9;
-          break;
-
-        case '9':
-        case 'NAO_CONTRIBUINTE':
-        case 'NAO CONTRIBUINTE':
-        case 'NC':
-        case 'RP':
-        default:
-          $result['indIEDest'] = 9;
-          break;
-      }
-    } else {
-      if ($isIsentoTexto) {
-        $result['indIEDest'] = 9;
-      } else {
-        $ieNumerico = UtilsController::soNumero($ie);
-        if (!empty($ieNumerico) && strlen($ieNumerico) >= 2) {
-          $result['indIEDest'] = 1;
-          $result['IE'] = $ieNumerico;
-        } else {
-          $result['indIEDest'] = 9;
-        }
-      }
-    }
-
-    return $result;
   }
 
   protected function generateClientAddressData($endereco)
@@ -744,15 +509,15 @@ abstract class BaseFiscalController extends Connection
   {
     $std = new stdClass();
     $std->item = $item;
-    $std->vTotTrib = $produto['total'] * (0 / 100);
+    $std->vTotTrib = number_format(0.00, 2, ".", "");
 
     return $std;
   }
 
   protected function addCombustivelTag($produto, $item)
   {
-    $std = new \stdClass();
-    $std->item = $item + 1;
+    $std = new stdClass();
+    $std->item = $item;
     $std->cProdANP = $produto['codigo_anp'];
     $std->descANP = $produto['descricao_anp'];
     $std->pGLP = $produto['gpl_percentual'];
@@ -765,8 +530,8 @@ abstract class BaseFiscalController extends Connection
 
   protected function addICMSCombTag($produto, $item)
   {
-    $std = new \stdClass();
-    $std->item = $item + 1;
+    $std = new stdClass();
+    $std->item = $item;
     $std->orig = '0';
     $std->CST = '61';
     $std->modBC = '3';
@@ -788,6 +553,7 @@ abstract class BaseFiscalController extends Connection
     $std->adRemICMSRet = '0.30';
     $std->vICMSMonoRet = '30.00';
     $std->qBCMonoRet = $produto['quantidade'];
+
     return $std;
   }
 
@@ -796,7 +562,7 @@ abstract class BaseFiscalController extends Connection
   protected function generateIcmsTot()
   {
     $std = new stdClass();
-    $std->vBC = number_format($this->baseTotalIcms, 2, ".", "");
+    $std->vBC = number_format(0, 2, ".", "");
     $std->vICMS = number_format($this->totalIcms, 2, ".", "");
     $std->vICMSDeson = 0.00;
     $std->vFCP = 0.00;
@@ -804,27 +570,18 @@ abstract class BaseFiscalController extends Connection
     $std->vST = 0.00;
     $std->vFCPST = 0.00;
     $std->vFCPSTRet = 0.00;
-    $std->vProd = number_format($this->total_produtos, 2, ".", "");
-    $std->vFrete = 0.00;
-    $std->vSeg = 0.00;
-    $std->vDesc = 0.00;
-    $std->vII = 0.00;
-    $std->vIPI = 0.00;
-    $std->vIPIDevol = 0.00;
-    $std->vPIS = 0.00;
-    $std->vCOFINS = 0.00;
-    $std->vOutro = 0.00;
-    $std->vNF = number_format($this->total_produtos, 2, ".", "");
-    $std->vTotTrib = 0.00;
+    $std->vProd = $this->total_produtos;
+    $std->vNF = $this->total_produtos;
+    $std->vTotTrib = 0;
 
     return $std;
   }
 
-  protected function generateIcmsInfo($data)
+  protected function generateIcmsInfo()
   {
     $std = new stdClass();
     $std->infAdFisco = '';
-    $std->infCpl = isset($data['observacao']) ? $data['observacao'] : '';
+    $std->infCpl = '';
 
     return $std;
   }
@@ -876,13 +633,6 @@ abstract class BaseFiscalController extends Connection
     return $std;
   }
 
-  protected function generateAutXMLData($data)
-  {
-    $std = new stdClass();
-    $std->CNPJ = isset($data['cnpj_consulta']) ? UtilsController::soNumero($data['cnpj_consulta']) : '13937073000156';
-    return $std;
-  }
-
   // ==================== MÉTODOS AUXILIARES ====================
 
   protected function montaChave()
@@ -903,14 +653,14 @@ abstract class BaseFiscalController extends Connection
   protected function atualizaNumero()
   {
     if ($this->ambiente === 1) {
-      $this->company->setNumero_nfe(intval($this->numero) + 1);
+      $this->company->setNumero_nfce(intval($this->numero) + 1);
       $this->company->update([
-        "numero_nfe" => $this->company->getNumero_nfe()
+        "numero_nfce" => $this->company->getNumero_nfce()
       ]);
     } else {
-      $this->company->setNumero_nfe_homologacao(intval($this->numero) + 1);
+      $this->company->setNumero_nfce_homologacao(intval($this->numero) + 1);
       $this->company->update([
-        "numero_nfe_homologacao" => $this->company->getNumero_nfe_homologacao()
+        "numero_nfce_homologacao" => $this->company->getNumero_nfce_homologacao()
       ]);
     }
   }
@@ -955,26 +705,29 @@ abstract class BaseFiscalController extends Connection
           default:
             http_response_code(403);
             echo json_encode([
-              "código" => $std->cStat,
               "error" => $std->xMotivo,
-              "xml" => $this->currentXML
+              "xml" => $this->currentXML,
+              "csc" => $this->csc,
             ]);
             break;
         }
       }
     } catch (\Exception $e) {
       http_response_code(500);
-      echo json_encode(['error' => $e->getMessage()]);
+      echo json_encode([
+        'error' => $e->getMessage(),
+        "xml" => $this->currentXML
+      ]);
     }
   }
 
   protected function processarLote($std)
   {
     $recibo = $std->infRec->nRec;
-    $this->response = $this->tools->sefazConsultaRecibo($recibo);
+    $response = $this->tools->sefazConsultaRecibo($recibo);
 
     $stdCl = new Standardize();
-    $std = $stdCl->toStd($this->response);
+    $std = $stdCl->toStd($response);
 
     $this->analisaRetorno($std);
   }
@@ -1003,11 +756,15 @@ abstract class BaseFiscalController extends Connection
 
     $this->currentXML = Complements::toAuthorize($this->currentXML, $this->response);
 
-    $danfe = new Danfe($this->currentXML);
+    $danfe = new Danfce($this->currentXML);
     $danfe->debugMode(true);
+    $danfe->setPaperWidth(80);
+    $danfe->setMargins(2);
     $danfe->setDefaultFont('arial');
+    $danfe->setOffLineDoublePrint(false);
     $danfe->creditsIntegratorFooter('Estoque Premium - Sistema de Gestão Comercial');
     $this->currentPDF = $danfe->render();
+
     UtilsController::uploadXml($this->currentXML, $this->currentChave);
     $link = UtilsController::uploadPdf($this->currentPDF, $this->currentChave);
 
@@ -1028,14 +785,13 @@ abstract class BaseFiscalController extends Connection
   protected function salvaEmissao()
   {
     $newEmissao = new EmissoesModel();
-
     $newEmissao->setChave($this->currentChave);
     $newEmissao->setNumero($this->numero);
     $newEmissao->setSerie($this->serie);
     $newEmissao->setEmpresa($this->company->getCnpj());
     $newEmissao->setXml($this->currentXML);
     $newEmissao->setPdf(base64_encode($this->currentPDF));
-    $newEmissao->setTipo('NFE');
+    $newEmissao->setTipo('NFCE');
     $newEmissao->setProtocolo($this->numeroProtocolo);
     $newEmissao->create();
   }
@@ -1074,7 +830,8 @@ abstract class BaseFiscalController extends Connection
     return $this->tools;
   }
 
-  private function salvarEvento($data) {
+  private function salvarEvento($data)
+  {
     $emissoesEventosModel = new EmissoesEventosModel();
     $emissoesEventosModel->setChave($data['chave']);
     $emissoesEventosModel->setTipo($data['tipo']);

@@ -191,17 +191,17 @@ class CompanyModel extends Connection
   public function create($data)
   {
     $sql = "INSERT INTO {$this->table} (
-      tpamb, cnpj, razao_social, nome_fantasia, telefone, email, cep, logradouro, numero, 
-      bairro, cidade, uf, certificado, senha, csc, csc_id, serie_nfce, numero_nfce, 
+      tpamb, cnpj, razao_social, nome_fantasia, telefone, email, cep, logradouro, numero,
+      bairro, cidade, uf, certificado, senha, csc, csc_id, serie_nfce, numero_nfce,
       serie_nfe, numero_nfe, codigo_municipio, codigo_uf, situacao_tributaria, inscricao_estadual,
-      csc_homologacao, csc_id_homologacao, serie_nfce_homologacao, numero_nfce_homologacao, serie_nfe_homologacao, 
+      csc_homologacao, csc_id_homologacao, serie_nfce_homologacao, numero_nfce_homologacao, serie_nfe_homologacao,
       numero_nfe_homologacao, crt
-    ) 
+    )
     VALUES (
-      :tpamb, :cnpj, :razao_social, :nome_fantasia, :telefone, :email, :cep, :logradouro, :numero, 
-      :bairro, :cidade, :uf, :certificado, :senha, :csc, :csc_id, :serie_nfce, :numero_nfce, 
+      :tpamb, :cnpj, :razao_social, :nome_fantasia, :telefone, :email, :cep, :logradouro, :numero,
+      :bairro, :cidade, :uf, :certificado, :senha, :csc, :csc_id, :serie_nfce, :numero_nfce,
       :serie_nfe, :numero_nfe, :codigo_municipio, :codigo_uf, :situacao_tributaria, :inscricao_estadual,
-      :csc_homologacao, :csc_id_homologacao, :serie_nfce_homologacao, :numero_nfce_homologacao, :serie_nfe_homologacao, 
+      :csc_homologacao, :csc_id_homologacao, :serie_nfce_homologacao, :numero_nfce_homologacao, :serie_nfe_homologacao,
       :numero_nfe_homologacao, :crt
     )";
 
@@ -251,7 +251,7 @@ class CompanyModel extends Connection
 
   public function update($data)
   {
-    $sql = "UPDATE {$this->table} SET 
+    $sql = "UPDATE {$this->table} SET
               tpamb = :tpamb,
               razao_social = :razao_social,
               nome_fantasia = :nome_fantasia,
@@ -357,9 +357,8 @@ class CompanyModel extends Connection
 
     if (file_exists($certificadoPath)) {
       $certificado = file_get_contents($certificadoPath);
-      $certs = \App\Controllers\UtilsController::openCertificate($certificado, $this->getSenha());
-
-      if ($certs) {
+      $certs = [];
+      if (openssl_pkcs12_read($certificado, $certs, $this->getSenha())) {
         return openssl_x509_parse($certs['cert']);
       } else {
         return null;
@@ -393,9 +392,8 @@ class CompanyModel extends Connection
 
     if (file_exists($certificadoPath)) {
       $certificado = file_get_contents($certificadoPath);
-      $certs = \App\Controllers\UtilsController::openCertificate($certificado, $senha);
-
-      if ($certs) {
+      $certs = [];
+      if (openssl_pkcs12_read($certificado, $certs, $senha)) {
         $data = openssl_x509_parse($certs['cert']);
         $data = json_encode($data);
         $data = json_decode($data);
@@ -1144,7 +1142,7 @@ class CompanyModel extends Connection
 
   /**
    * Get the value of crt
-   */ 
+   */
   public function getCrt()
   {
     return $this->crt;
@@ -1154,7 +1152,7 @@ class CompanyModel extends Connection
    * Set the value of crt
    *
    * @return  self
-   */ 
+   */
   public function setCrt($crt)
   {
     $this->crt = $crt;
