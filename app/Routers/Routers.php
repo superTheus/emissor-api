@@ -234,8 +234,26 @@ class Routers
 
       $router->get('/{uf}/{cidade}', function ($uf, $cidade) {
         $municipiosController = new MunicipiosController();
+
+        $estadosController = new EstadosController();
+        $estado = $estadosController->find([
+          "filter" => [
+            "uf" => $uf
+          ],
+          "limit" => 1
+        ]);
+
+        if (!$estado || count($estado) === 0) {
+          http_response_code(404);
+          echo json_encode(['error' => 'Estado não encontrado']);
+          return;
+        }
+
         $municipiosController->findunique([
-          "filter" => ["nome" => $cidade]
+          "filter" => [
+            "nome" => $cidade,
+            "id_estado" => $estado[0]['id']
+          ]
         ]);
       });
 
