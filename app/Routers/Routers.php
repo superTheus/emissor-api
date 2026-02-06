@@ -136,10 +136,6 @@ class Routers
         $router->get('/test/{cnpj}', function ($cnpj) {
           UtilsController::testCertificate($cnpj);
         });
-
-        $router->get('/debug/{cnpj}', function ($cnpj) {
-          UtilsController::debugCertificate($cnpj);
-        });
       });
     });
 
@@ -230,16 +226,40 @@ class Routers
     });
 
     $router->mount('/municipios', function () use ($router) {
+      $router->post('/', function () {
+        $data = json_decode(file_get_contents('php://input'), true);
+        $municipiosController = new MunicipiosController();
+        $municipiosController->find($data);
+      });
+
+      $router->get('/{uf}/{cidade}', function ($uf, $cidade) {
+        $municipiosController = new MunicipiosController();
+
+        $estadosController = new EstadosController();
+        $estado = $estadosController->findOnly([
+          "filter" => [
+            "uf" => $uf
+          ],
+          "limit" => 1
+        ]);
+
+        if (!$estado || count($estado) === 0) {
+          http_response_code(404);
+          echo json_encode(['error' => 'Estado não encontrado']);
+          return;
+        }
+
+        $municipiosController->findunique([
+          "filter" => [
+            "nome" => $cidade,
+            "id_estado" => $estado['id']
+          ]
+        ]);
+      });
+
       $router->post('/{uf}', function ($uf) {
         $municipiosController = new MunicipiosController();
         $municipiosController->findByUf($uf);
-      });
-
-      $router->get('/{cidade}', function ($cidade) {
-        $municipiosController = new MunicipiosController();
-        $municipiosController->findunique([
-          "filter" => ["nome" => $cidade]
-        ]);
       });
     });
 
