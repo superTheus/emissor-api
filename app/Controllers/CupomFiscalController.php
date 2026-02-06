@@ -114,7 +114,9 @@ class CupomFiscalController extends Connection
       $this->nfe->tagemit($this->generateDataCompany());
       $this->nfe->tagenderEmit($this->generateDataAddress());
 
-      $this->nfe->tagdest($this->generateClientData($this->data));
+      if (isset($this->data['cliente']['documento']) && !empty($this->data['cliente']['documento'])) {
+        $this->nfe->tagdest($this->generateClientData($this->data));
+      }
 
       if (isset($this->data['cliente']) && !empty($this->data['cliente']) && strtoupper($this->data['cliente']['nome']) !== 'CONSUMIDOR FINAL') {
         if (isset($this->data['cliente']['endereco']) && !empty($this->data['cliente']['endereco'])) {
@@ -342,21 +344,13 @@ class CupomFiscalController extends Connection
 
       if (strtoupper($cliente['nome']) === 'CONSUMIDOR FINAL') {
         $std->xNome = "Consumidor Final";
-
-        if ($cliente['tipo_documento'] === 'CPF') {
-          $std->CPF = UtilsController::soNumero($cliente['documento']);
-        } else {
-          $std->CNPJ = UtilsController::soNumero($cliente['documento']);
-        }
-
-        return $std;
+      } else {
+        $std->xNome = $cliente['nome'];
       }
-
-      $std->xNome = $cliente['nome'];
 
       if ($cliente['tipo_documento'] === 'CPF') {
         $std->CPF = UtilsController::soNumero($cliente['documento']);
-      } else {
+      } elseif ($cliente['tipo_documento'] === 'CNPJ') {
         $std->CNPJ = UtilsController::soNumero($cliente['documento']);
       }
     } else {
