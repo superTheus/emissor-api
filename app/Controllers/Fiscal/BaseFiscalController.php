@@ -595,7 +595,7 @@ abstract class BaseFiscalController extends Connection
         return $std;
       }
 
-      $std->xNome = $cliente['nome'];
+      $std->xNome = substr($cliente['nome'], 0, 60);
 
       if ($cliente['tipo_documento'] === 'CPF') {
         $std->CPF = UtilsController::soNumero($cliente['documento']);
