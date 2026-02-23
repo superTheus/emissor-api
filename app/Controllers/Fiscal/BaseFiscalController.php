@@ -244,6 +244,11 @@ abstract class BaseFiscalController extends Connection
       if (isset($this->data['observacao']) && !empty(trim($this->data['observacao']))) {
         $this->nfe->taginfAdic($this->generateIcmsInfo($this->data));
       }
+
+      if (isset($this->data['nota_referencia'])) {
+        $this->nfe->tagrefNFe($this->generateReferencia($this->data['nota_referencia']));
+      }
+
       $this->nfe->taginfRespTec($this->generateReponsavelTecnico());
       $this->nfe->tagtransp($this->generateFreteData());
       $this->nfe->tagpag($this->generateFaturaData());
@@ -254,7 +259,6 @@ abstract class BaseFiscalController extends Connection
       }
 
       $this->currentXML = $this->nfe->getXML();
-
       $this->currentXML = $this->tools->signNFe($this->currentXML);
 
       $this->response = $this->tools->sefazEnviaLote([$this->currentXML], str_pad(1, 15, '0', STR_PAD_LEFT), 1);
@@ -508,8 +512,6 @@ abstract class BaseFiscalController extends Connection
     return $config;
   }
 
-  // ==================== MÉTODOS DE GERAÇÃO DE DADOS ====================
-
   protected function generateIdeData($data)
   {
     $ufCliente = $data['cliente']['endereco']['uf'];
@@ -531,7 +533,7 @@ abstract class BaseFiscalController extends Connection
     $std->tpEmis = $this->modo_emissao;
     $std->cDV = mb_substr($this->currentChave, -1);
     $std->tpAmb = $this->ambiente;
-    $std->finNFe = 1;
+    $std->finNFe = isset($data['finalidade']) ? $data['finalidade'] : 1;
     $std->indFinal = isset($data['consumidor_final']) && $data['consumidor_final'] === 'S' ? 1 : 0;
 
     if ($this->tipoCliente === 'PF') {
@@ -613,6 +615,13 @@ abstract class BaseFiscalController extends Connection
       $std->indIEDest = 9;
     }
 
+    return $std;
+  }
+
+  protected function generateReferencia($chave)
+  {
+    $std = new stdClass();
+    $std->refNFe = str_replace(' ', '', $chave);
     return $std;
   }
 
@@ -860,15 +869,20 @@ abstract class BaseFiscalController extends Connection
   protected function generatePagamentoData($pagamento)
   {
     $std = new stdClass();
-    $std->indPag = isset($pagamento['indPag']) ? $pagamento['indPag'] : 0;
-    $std->tPag = str_pad($pagamento['tPag'], 2, '0', STR_PAD_LEFT);
-    $std->vPag = number_format($pagamento['valorpago'], 2, ".", "");
+    if (isset($this->data['finalidade']) && $this->data['finalidade'] == 4) {
+      $std->tPag = 90;
+      $std->vPag = 0;
+    } else {
+      $std->indPag = isset($pagamento['indPag']) ? $pagamento['indPag'] : 0;
+      $std->tPag = str_pad($pagamento['tPag'], 2, '0', STR_PAD_LEFT);
+      $std->vPag = number_format($pagamento['valorpago'], 2, ".", "");
 
-    if (in_array($std->tPag, ['03', '04', '17', '3', '4', '17', 3, 4, 17])) {
-      $std->tpIntegra = 2;
-      $std->CNPJPag = "00000000000191";
-      $std->tBand = "99";
-      $std->cAut = "000000";
+      if (in_array($std->tPag, ['03', '04', '17', '3', '4', '17', 3, 4, 17])) {
+        $std->tpIntegra = 2;
+        $std->CNPJPag = "00000000000191";
+        $std->tBand = "99";
+        $std->cAut = "000000";
+      }
     }
 
     return $std;
