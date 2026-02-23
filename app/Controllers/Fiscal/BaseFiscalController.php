@@ -844,7 +844,7 @@ abstract class BaseFiscalController extends Connection
   protected function generateNFTotal()
   {
     $std = new stdClass();
-    $std->vNFTot = number_format($std->totalIBS, 2, ".", "");
+    $std->vNFTot = number_format($this->totalIBS, 2, ".", "");
 
     return $std;
   }
