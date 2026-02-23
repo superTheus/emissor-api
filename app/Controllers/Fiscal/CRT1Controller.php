@@ -183,6 +183,12 @@ class CRT1Controller extends BaseFiscalController
       ''
     );
 
+    $std->vNFTot = number_format(
+      $produto['total'] + $std->gIBSUF_vIBSUF + $std->gIBSMun_vIBSMun + $std->gCBS_vCBS,
+      2,
+      '.',
+      ''
+    );
 
     return $std;
   }
