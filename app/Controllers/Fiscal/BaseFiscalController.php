@@ -240,7 +240,7 @@ abstract class BaseFiscalController extends Connection
         $this->totalIcms += number_format($this->valorIcms, 2, ".", "");
       }
 
-      $this->nfe->tagICMSTot($this->generateIcmsTot());
+      $this->nfe->tagICMSTot($this->generateIcmsTot($this->data));
       if (isset($this->data['observacao']) && !empty(trim($this->data['observacao']))) {
         $this->nfe->taginfAdic($this->generateIcmsInfo($this->data));
       }
@@ -709,7 +709,7 @@ abstract class BaseFiscalController extends Connection
     $std->uCom = $produto['unidade'];
     $std->qCom = $produto['quantidade'];
     $std->vUnCom = number_format($produto['valor'], 2, ".", "");
-    $std->vProd = $produto['total'];
+    $std->vProd = number_format($produto['valor'] * $produto['quantidade'], 2, ".", "");
     $std->cEANTrib = $produto['ean'];
     $std->uTrib = $produto['unidade'];
     $std->qTrib = $produto['quantidade'];
@@ -728,7 +728,7 @@ abstract class BaseFiscalController extends Connection
       $std->vOutro = number_format($produto['acrescimo'], 2, ".", "");
     }
 
-    $this->total_produtos += floatval($produto['total']);
+    $this->total_produtos += floatval($produto['valor'] * $produto['quantidade']);
 
     return $std;
   }
@@ -795,7 +795,7 @@ abstract class BaseFiscalController extends Connection
 
   // ==================== MÉTODOS DE TOTALIZAÇÃO ====================
 
-  protected function generateIcmsTot()
+  protected function generateIcmsTot($data)
   {
     $std = new stdClass();
     $std->vBC = number_format($this->baseTotalIcms, 2, ".", "");
@@ -807,6 +807,14 @@ abstract class BaseFiscalController extends Connection
     $std->vFCPST = 0.00;
     $std->vFCPSTRet = 0.00;
     $std->vProd = number_format($this->total_produtos, 2, ".", "");
+
+    $totalProdutos = floatval($this->total_produtos);
+
+    if (isset($data['desconto']) && $data['desconto'] > 0) {
+      $std->vDesc = number_format($data['desconto'], 2, ".", "");
+      $totalProdutos -= floatval($data['desconto']);
+    }
+
     $std->vFrete = 0.00;
     $std->vSeg = 0.00;
     $std->vDesc = 0.00;
@@ -816,7 +824,7 @@ abstract class BaseFiscalController extends Connection
     $std->vPIS = 0.00;
     $std->vCOFINS = 0.00;
     $std->vOutro = 0.00;
-    $std->vNF = number_format($this->total_produtos, 2, ".", "");
+    $std->vNF = number_format($totalProdutos, 2, ".", "");
     $std->vTotTrib = 0.00;
 
     return $std;
@@ -1076,7 +1084,8 @@ abstract class BaseFiscalController extends Connection
     return $this->tools;
   }
 
-  private function salvarEvento($data) {
+  private function salvarEvento($data)
+  {
     $emissoesEventosModel = new EmissoesEventosModel();
     $emissoesEventosModel->setChave($data['chave']);
     $emissoesEventosModel->setTipo($data['tipo']);
