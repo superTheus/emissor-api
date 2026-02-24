@@ -122,12 +122,16 @@ class CRT1Controller extends BaseFiscalController
    */
   protected function generatePisDataSimple($produto, $item)
   {
+    $aliquotaPIS = $produto['aliquota_pis'] ?? 0.00;
+    $valorPis = $produto['total'] * ($aliquotaPIS / 100);
+    $cst = $produto['cst_pis'] ?? '06';
+
     $std = new stdClass();
     $std->item = $item;
-    $std->CST = '06'; // Operação Tributável - Alíquota Zero
+    $std->CST = $cst; // Operação Tributável - Alíquota Zero
     $std->vBC = number_format($produto['total'], 2, ".", "");
-    $std->pPIS = number_format(0, 2, ".", "");
-    $std->vPIS = number_format(0, 2, ".", "");
+    $std->pPIS = number_format($aliquotaPIS, 2, ".", "");
+    $std->vPIS = number_format($valorPis, 2, ".", "");
 
     return $std;
   }
@@ -192,12 +196,16 @@ class CRT1Controller extends BaseFiscalController
    */
   protected function generateConfinsDataSimple($produto, $item)
   {
+    $aliquotaCOFINS = $produto['aliquota_cofins'] ?? 0.00;
+    $valorCOFINS = $produto['total'] * ($aliquotaCOFINS / 100);
+    $cst = $produto['cst_cofins'] ?? '06';
+
     $std = new stdClass();
     $std->item = $item;
-    $std->CST = '06'; // Operação Tributável - Alíquota Zero
+    $std->CST = $cst; // Operação Tributável - Alíquota Zero
     $std->vBC = number_format($produto['total'], 2, ".", "");
-    $std->pCOFINS = number_format(0, 2, ".", "");
-    $std->vCOFINS = number_format(0, 2, ".", "");
+    $std->pCOFINS = number_format($aliquotaCOFINS, 2, ".", "");
+    $std->vCOFINS = number_format($valorCOFINS, 2, ".", "");
 
     return $std;
   }
