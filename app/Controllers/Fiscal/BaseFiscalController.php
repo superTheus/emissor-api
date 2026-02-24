@@ -60,6 +60,7 @@ abstract class BaseFiscalController extends Connection
   protected $aliquotaIbsEstadual = 0.00;
   protected $aliquotaIbsMunicipal = 0.00;
   protected $aliquotaCbs = 0.00;
+  protected $totalIBS = 0.00;
 
 
   public function __construct($data = null)
@@ -241,6 +242,7 @@ abstract class BaseFiscalController extends Connection
       }
 
       $this->nfe->tagICMSTot($this->generateIcmsTot($this->data));
+      $this->nfe->tagTotal($this->generateNFTotal());
       if (isset($this->data['observacao']) && !empty(trim($this->data['observacao']))) {
         $this->nfe->taginfAdic($this->generateIcmsInfo($this->data));
       }
@@ -593,7 +595,7 @@ abstract class BaseFiscalController extends Connection
         return $std;
       }
 
-      $std->xNome = $cliente['nome'];
+      $std->xNome = substr($cliente['nome'], 0, 60);
 
       if ($cliente['tipo_documento'] === 'CPF') {
         $std->CPF = UtilsController::soNumero($cliente['documento']);
@@ -835,6 +837,14 @@ abstract class BaseFiscalController extends Connection
     $std->vOutro = 0.00;
     $std->vNF = number_format($totalProdutos, 2, ".", "");
     $std->vTotTrib = 0.00;
+
+    return $std;
+  }
+
+  protected function generateNFTotal()
+  {
+    $std = new stdClass();
+    $std->vNFTot = number_format($this->totalIBS, 2, ".", "");
 
     return $std;
   }

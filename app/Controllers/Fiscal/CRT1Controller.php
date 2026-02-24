@@ -187,6 +187,7 @@ class CRT1Controller extends BaseFiscalController
       ''
     );
 
+    $this->totalIBS += floatval($produto['total']) + floatval($std->gIBSUF_vIBSUF) + floatval($std->gIBSMun_vIBSMun) + floatval($std->gCBS_vCBS);
 
     return $std;
   }
