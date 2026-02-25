@@ -249,8 +249,6 @@ class Routers
           return;
         }
 
-        die(json_encode($estado));
-
         $municipiosController->findunique([
           "filter" => [
             "nome" => $cidade,
