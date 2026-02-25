@@ -2,6 +2,7 @@
 
 namespace App\Controllers\Fiscal;
 
+use App\Controllers\UtilsController;
 use stdClass;
 
 /**
@@ -122,16 +123,29 @@ class CRT1Controller extends BaseFiscalController
    */
   protected function generatePisDataSimple($produto, $item)
   {
-    $aliquotaPIS = $produto['aliquota_pis'] ?? 0.00;
-    $valorPis = $produto['total'] * ($aliquotaPIS / 100);
-    $cst = $produto['cst_pis'] ?? '06';
+    $aliquotaPIS = isset($produto['aliquota_pis']) ? floatval($produto['aliquota_pis']) : 0.00;
+    $valorPis = floatval($produto['total']) * ($aliquotaPIS / 100);
+    $cst = str_pad(strval($produto['cst_pis'] ?? '06'), 2, '0', STR_PAD_LEFT);
+
+    $cst = UtilsController::validaCST($cst) ? $cst : '06';
 
     $std = new stdClass();
     $std->item = $item;
-    $std->CST = $cst; // Operação Tributável - Alíquota Zero
-    $std->vBC = number_format($produto['total'], 2, ".", "");
-    $std->pPIS = number_format($aliquotaPIS, 2, ".", "");
-    $std->vPIS = number_format($valorPis, 2, ".", "");
+
+    if (in_array($cst, ['06', '07', '08', '09'])) {
+      $pisnt = new stdClass();
+      $pisnt->CST = $cst;
+      $std->PISNT = $pisnt;
+      return $std;
+    }
+
+    // PIS com alíquota (PISAliq)
+    $pisAliq = new stdClass();
+    $pisAliq->CST = $cst;
+    $pisAliq->vBC = number_format(floatval($produto['total']), 2, '.', '');
+    $pisAliq->pPIS = number_format($aliquotaPIS, 2, '.', '');
+    $pisAliq->vPIS = number_format($valorPis, 2, '.', '');
+    $std->PISAliq = $pisAliq;
 
     return $std;
   }

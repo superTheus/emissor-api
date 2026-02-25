@@ -20,7 +20,7 @@ class UtilsController
 
   /**
    * Abre e lê um certificado PKCS12 (.pfx/.p12) com suporte a algoritmos legacy
-   * 
+   *
    * @param string $certificadoContent Conteúdo binário do certificado ou caminho do arquivo
    * @param string $senha Senha do certificado
    * @param bool $isFilePath Se true, $certificadoContent é tratado como caminho de arquivo
@@ -37,7 +37,7 @@ class UtilsController
     $caminhoTemporario = tempnam(sys_get_temp_dir(), 'cert') . '.p12';
     file_put_contents($caminhoTemporario, $certificadoContent);
     $caminhoConvertido = tempnam(sys_get_temp_dir(), 'cert') . '.pem';
-    
+
     // Cria arquivo de configuração OpenSSL que força uso de algoritmos legacy
     $opensslConfig = tempnam(sys_get_temp_dir(), 'ssl') . '.cnf';
     $configContent = <<<CONF
@@ -57,28 +57,28 @@ activate = 1
 activate = 1
 CONF;
     file_put_contents($opensslConfig, $configContent);
-    
+
     // Usa proc_open para ter controle total do ambiente
     $descriptors = [
       0 => ['pipe', 'r'],
       1 => ['pipe', 'w'],
       2 => ['pipe', 'w']
     ];
-    
+
     $env = [
       'OPENSSL_CONF' => $opensslConfig,
       'PATH' => getenv('PATH')
     ];
-    
+
     $comando = sprintf(
       'openssl pkcs12 -in %s -out %s -nodes -password pass:%s -legacy',
       escapeshellarg($caminhoTemporario),
       escapeshellarg($caminhoConvertido),
       escapeshellarg($senha)
     );
-    
+
     $process = proc_open($comando, $descriptors, $pipes, null, $env);
-    
+
     $success = false;
     if (is_resource($process)) {
       fclose($pipes[0]);
@@ -87,12 +87,12 @@ CONF;
       fclose($pipes[1]);
       fclose($pipes[2]);
       $returnCode = proc_close($process);
-      
+
       if ($returnCode === 0 && file_exists($caminhoConvertido)) {
         $success = true;
       }
     }
-    
+
     // Se falhou, tenta sem -legacy
     if (!$success) {
       $comando = sprintf(
@@ -101,9 +101,9 @@ CONF;
         escapeshellarg($caminhoConvertido),
         escapeshellarg($senha)
       );
-      
+
       $process = proc_open($comando, $descriptors, $pipes, null, $env);
-      
+
       if (is_resource($process)) {
         fclose($pipes[0]);
         stream_get_contents($pipes[1]);
@@ -111,16 +111,16 @@ CONF;
         fclose($pipes[1]);
         fclose($pipes[2]);
         $returnCode = proc_close($process);
-        
+
         if ($returnCode === 0 && file_exists($caminhoConvertido)) {
           $success = true;
         }
       }
     }
-    
+
     @unlink($opensslConfig);
     @unlink($caminhoTemporario);
-    
+
     if (!$success) {
       @unlink($caminhoConvertido);
       return false;
@@ -129,10 +129,10 @@ CONF;
     // Lê o certificado convertido
     $pemContent = file_get_contents($caminhoConvertido);
     @unlink($caminhoConvertido);
-    
+
     // Extrai as partes do PEM - suporta múltiplos formatos de chave privada
     preg_match('/-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----/s', $pemContent, $certMatch);
-    
+
     // Tenta diferentes formatos de chave privada
     if (!preg_match('/-----BEGIN PRIVATE KEY-----.*?-----END PRIVATE KEY-----/s', $pemContent, $keyMatch)) {
       // Tenta formato RSA
@@ -142,7 +142,7 @@ CONF;
       // Tenta formato ENCRYPTED
       preg_match('/-----BEGIN ENCRYPTED PRIVATE KEY-----.*?-----END ENCRYPTED PRIVATE KEY-----/s', $pemContent, $keyMatch);
     }
-    
+
     if (!isset($certMatch[0])) {
       return false;
     }
@@ -163,7 +163,7 @@ CONF;
   /**
    * Lê certificado PFX e retorna no formato compatível com NFePHP Tools
    * Alternativa ao Certificate::readPfx() com suporte a algoritmos legacy
-   * 
+   *
    * @param string $certificadoContent Conteúdo binário do certificado
    * @param string $senha Senha do certificado
    * @return \NFePHP\Common\Certificate Objeto Certificate do NFePHP
@@ -171,7 +171,7 @@ CONF;
   public static function readPfxForNFePHP($certificadoContent, $senha)
   {
     $certs = self::openCertificate($certificadoContent, $senha);
-    
+
     if (!$certs) {
       throw new \Exception("Impossível ler o certificado. Verifique a senha ou formato do arquivo.");
     }
@@ -183,7 +183,7 @@ CONF;
     // Garante que as chaves estão formatadas corretamente (com quebras de linha)
     $privateKeyPem = trim($certs['pkey']);
     $publicKeyPem = trim($certs['cert']);
-    
+
     // Valida que os PEM estão corretos
     if (strpos($privateKeyPem, '-----BEGIN') === false || strpos($privateKeyPem, '-----END') === false) {
       throw new \Exception("Formato de chave privada inválido.");
@@ -220,27 +220,27 @@ CONF;
       try {
         $certificado = self::getCertifcado($company->getCertificado());
         $certificate = self::readPfxForNFePHP($certificado, $company->getSenha());
-        
+
         // Simula o que o NFePHP faz
         $privateKeyStr = "{$certificate->privateKey}";
         $publicKeyStr = "{$certificate->publicKey}";
         $certificateStr = "{$certificate}";
-        
+
         // Testa cada parte
         $privKeyValid = openssl_pkey_get_private($privateKeyStr) !== false;
         $pubKeyValid = openssl_x509_read($publicKeyStr) !== false;
-        
+
         // Simula o arquivo certfile que o NFePHP cria: privateKey + certificate
         $certfile = $privateKeyStr . $certificateStr;
         $certfileValid = openssl_pkey_get_private($certfile) !== false;
-        
+
         // Salva em arquivo temporário para testar exatamente como o cURL vai ler
         $tempFile = tempnam(sys_get_temp_dir(), 'cert_test') . '.pem';
         file_put_contents($tempFile, $certfile);
         $fileContent = file_get_contents($tempFile);
         $fileValid = openssl_pkey_get_private($fileContent) !== false;
         @unlink($tempFile);
-        
+
         http_response_code(200);
         echo json_encode([
           "privateKey_length" => strlen($privateKeyStr),
@@ -381,5 +381,14 @@ CONF;
     }
 
     return 0;
+  }
+
+  public static function validaCST($cst) {
+    $cst = str_pad($cst, 3, '0', STR_PAD_LEFT);
+    $validCSTs = [
+      '01', '02', '03', '04', '05', '06', '07', '08', '09'
+    ];
+
+    return in_array($cst, $validCSTs);
   }
 }
