@@ -143,6 +143,7 @@ class CRT1Controller extends BaseFiscalController
 
     $this->totalPIS += floatval($std->vPIS);
     $this->totalImposto += floatval($std->vPIS);
+    $this->totalImpostoProduto += floatval($std->vPIS);
 
     return $std;
   }
@@ -221,6 +222,7 @@ class CRT1Controller extends BaseFiscalController
 
     $this->totalCOFINS += floatval($std->vCOFINS);
     $this->totalImposto += floatval($std->vCOFINS);
+    $this->totalImpostoProduto += floatval($std->vCOFINS);
 
     return $std;
   }

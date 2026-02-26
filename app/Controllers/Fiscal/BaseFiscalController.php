@@ -65,6 +65,7 @@ abstract class BaseFiscalController extends Connection
   protected $totalPIS = 0.00;
   protected $totalCOFINS = 0.00;
   protected $totalImposto = 0.00;
+  protected $totalImpostoProduto = 0.00;
 
   public function __construct($data = null)
   {
@@ -236,10 +237,12 @@ abstract class BaseFiscalController extends Connection
           $this->nfe->taginfAdProd($this->generateProdutoInfoAdicional($produto, $index + 1));
         }
 
-        $this->nfe->tagimposto($this->generateImpostoData($produto, $index + 1));
-
         // Método abstrato - cada regime implementa sua própria lógica
         $this->processarImpostosProduto($produto, $index);
+
+        $this->nfe->tagimposto($this->generateImpostoData($produto, $index + 1));
+
+        $this->totalImpostoProduto = 0;
 
         $this->totalIcms += number_format($this->valorIcms, 2, ".", "");
       }
@@ -761,7 +764,7 @@ abstract class BaseFiscalController extends Connection
   {
     $std = new stdClass();
     $std->item = $item;
-    $std->vTotTrib = $produto['total'] * (0 / 100);
+    $std->vTotTrib = $this->totalImpostoProduto;
 
     return $std;
   }
