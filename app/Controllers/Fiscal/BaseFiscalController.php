@@ -61,7 +61,10 @@ abstract class BaseFiscalController extends Connection
   protected $aliquotaIbsMunicipal = 0.00;
   protected $aliquotaCbs = 0.00;
   protected $totalIBS = 0.00;
-
+  protected $totalCbs = 0.00;
+  protected $totalPIS = 0.00;
+  protected $totalCOFINS = 0.00;
+  protected $totalImposto = 0.00;
 
   public function __construct($data = null)
   {
@@ -243,6 +246,7 @@ abstract class BaseFiscalController extends Connection
 
       $this->nfe->tagICMSTot($this->generateIcmsTot($this->data));
       $this->nfe->tagTotal($this->generateNFTotal());
+
       if (isset($this->data['observacao']) && !empty(trim($this->data['observacao']))) {
         $this->nfe->taginfAdic($this->generateIcmsInfo($this->data));
       }
@@ -832,11 +836,11 @@ abstract class BaseFiscalController extends Connection
     $std->vII = 0.00;
     $std->vIPI = 0.00;
     $std->vIPIDevol = 0.00;
-    $std->vPIS = 0.00;
-    $std->vCOFINS = 0.00;
+    $std->vPIS = $this->totalPIS;
+    $std->vCOFINS = $this->totalCOFINS;
     $std->vOutro = 0.00;
     $std->vNF = number_format($totalProdutos, 2, ".", "");
-    $std->vTotTrib = 0.00;
+    $std->vTotTrib = number_format($this->totalImposto, 2, ".", "");
 
     return $std;
   }

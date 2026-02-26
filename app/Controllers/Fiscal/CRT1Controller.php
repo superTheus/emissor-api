@@ -115,6 +115,11 @@ class CRT1Controller extends BaseFiscalController
       $this->valorIcms = $std->vCredICMSSN;
     }
 
+    // $this->totalImposto += floatval($std->vCredICMSSN);
+    // $this->totalImposto += floatval($std->vICMS);
+    // $this->totalImposto += floatval($std->vICMSST);
+    // $this->totalImposto += floatval($std->vBCST);
+
     return $std;
   }
 
@@ -135,6 +140,9 @@ class CRT1Controller extends BaseFiscalController
     $std->vBC = number_format($produto['total'], 2, ".", "");
     $std->pPIS = number_format($aliquotaPIS, 2, ".", "");
     $std->vPIS = number_format($valorPis, 2, ".", "");
+
+    $this->totalPIS += floatval($std->vPIS);
+    $this->totalImposto += floatval($std->vPIS);
 
     return $std;
   }
@@ -210,6 +218,9 @@ class CRT1Controller extends BaseFiscalController
     $std->vBC = number_format($produto['total'], 2, ".", "");
     $std->pCOFINS = number_format($aliquotaCOFINS, 2, ".", "");
     $std->vCOFINS = number_format($valorCOFINS, 2, ".", "");
+
+    $this->totalCOFINS += floatval($std->vCOFINS);
+    $this->totalImposto += floatval($std->vCOFINS);
 
     return $std;
   }
