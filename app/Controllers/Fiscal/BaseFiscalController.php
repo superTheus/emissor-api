@@ -626,8 +626,12 @@ abstract class BaseFiscalController extends Connection
       $ieInfo = $this->resolveIndIEDest($cliente);
       $std->indIEDest = $ieInfo['indIEDest'];
 
-      if ($ieInfo['indIEDest'] === 1 && !empty($ieInfo['IE'])) {
-        $std->IE = $ieInfo['IE'];
+      // if ($ieInfo['indIEDest'] === 1 && !empty($ieInfo['IE'])) {
+      //   $std->IE = $ieInfo['IE'];
+      // }
+
+      if(isset($cliente['inscricao_estadual'])) {
+        $std->IE = $cliente['inscricao_estadual'];
       }
     } else {
       $std->xNome = "Consumidor Final";

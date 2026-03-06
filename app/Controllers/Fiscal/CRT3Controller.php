@@ -113,9 +113,9 @@ class CRT3Controller extends BaseFiscalController
     $std = new stdClass();
     $std->item = $item;
     $std->orig = $produto['origem'] ?? 0;
-    $std->CST = '40'; // Isenta
-    $std->vICMSDeson = 0.00;
-    $std->motDesICMS = 9; // Outros
+    $std->CST =  $produto['cst_icms'] ?? '40'; // Isenta
+    // $std->vICMSDeson = 0.00;
+    // $std->motDesICMS = 9; // Outros
 
     return $std;
   }
