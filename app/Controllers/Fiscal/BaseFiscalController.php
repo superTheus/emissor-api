@@ -61,11 +61,16 @@ abstract class BaseFiscalController extends Connection
   protected $aliquotaIbsMunicipal = 0.00;
   protected $aliquotaCbs = 0.00;
   protected $totalIBS = 0.00;
+  protected $totalIBSUF = 0.00;
+  protected $totalIBSMun = 0.00;
+  protected $totalCBS = 0.00;
   protected $totalCbs = 0.00;
+  protected $baseIBS = 0.00;
   protected $totalPIS = 0.00;
   protected $totalCOFINS = 0.00;
   protected $totalImposto = 0.00;
   protected $totalImpostoProduto = 0.00;
+  protected $totalFrete = 0.00;
 
   public function __construct($data = null)
   {
@@ -222,14 +227,23 @@ abstract class BaseFiscalController extends Connection
       $this->nfe->tagdest($this->generateClientData($this->data));
       $this->nfe->tagenderDest($this->generateClientAddressData($this->data['cliente']['endereco']));
 
+      if ($this->data['total_frete'] ?? 0 > 0) {
+        $this->totalFrete = floatval($this->data['total_frete']);
+      }
+
       $this->baseTotalIcms = 0;
       $this->totalIcms = 0;
       $this->total_produtos = 0;
 
+      foreach ($this->data['produtos'] as $index => $produto) {
+        $this->total_produtos += floatval($produto['valor']) * floatval($produto['quantidade']);
+      }
+
       foreach ($this->produtos as $index => $produto) {
+        $produto['frete'] = $this->rateioFrete($produto['total'], $this->total_produtos, $this->totalFrete);
+
         $this->baseCalculo = ($produto['total'] - $produto['desconto'] + $produto['frete'] + $produto['acrescimo']);
         $this->origem = $produto['origem'];
-        $this->valorIcms = 0;
 
         $this->nfe->tagprod($this->generateProductData($produto, $index + 1));
 
@@ -237,14 +251,11 @@ abstract class BaseFiscalController extends Connection
           $this->nfe->taginfAdProd($this->generateProdutoInfoAdicional($produto, $index + 1));
         }
 
-        // Método abstrato - cada regime implementa sua própria lógica
         $this->processarImpostosProduto($produto, $index);
 
         $this->nfe->tagimposto($this->generateImpostoData($produto, $index + 1));
-
         $this->totalImpostoProduto = 0;
-
-        $this->totalIcms += number_format($this->valorIcms, 2, ".", "");
+        // $this->totalIcms += number_format($this->valorIcms, 2, ".", "");
       }
 
       $this->nfe->tagICMSTot($this->generateIcmsTot($this->data));
@@ -254,7 +265,7 @@ abstract class BaseFiscalController extends Connection
         $this->nfe->taginfAdic($this->generateIcmsInfo($this->data));
       }
 
-      if (isset($this->data['nota_referencia'])) {
+      if (isset($this->data['nota_referencia']) && !empty($this->data['nota_referencia'])) {
         $this->nfe->tagrefNFe($this->generateReferencia($this->data['nota_referencia']));
       }
 
@@ -746,8 +757,6 @@ abstract class BaseFiscalController extends Connection
       $std->vOutro = number_format($produto['acrescimo'], 2, ".", "");
     }
 
-    $this->total_produtos += floatval($produto['valor'] * $produto['quantidade']);
-
     return $std;
   }
 
@@ -833,7 +842,7 @@ abstract class BaseFiscalController extends Connection
       $totalProdutos -= floatval($data['desconto']);
     }
 
-    $std->vFrete = 0.00;
+    $std->vFrete = $this->totalFrete;
     $std->vSeg = 0.00;
     $std->vDesc = 0.00;
     $std->vII = 0.00;
@@ -842,7 +851,7 @@ abstract class BaseFiscalController extends Connection
     $std->vPIS = $this->totalPIS;
     $std->vCOFINS = $this->totalCOFINS;
     $std->vOutro = 0.00;
-    $std->vNF = number_format($totalProdutos, 2, ".", "");
+    $std->vNF = number_format($totalProdutos + $this->totalFrete, 2, ".", "");
     $std->vTotTrib = number_format($this->totalImposto, 2, ".", "");
 
     return $std;
@@ -851,7 +860,20 @@ abstract class BaseFiscalController extends Connection
   protected function generateNFTotal()
   {
     $std = new stdClass();
-    $std->vNFTot = number_format($this->totalIBS, 2, ".", "");
+
+    $std->vBCIBSCBS = number_format($this->baseIBS, 2, ".", "");
+
+    // IBS
+    $std->vIBSUF = number_format($this->totalIBSUF, 2, ".", "");
+    $std->vIBSMun = number_format($this->totalIBSMun, 2, ".", "");
+    $std->vIBS = number_format($this->totalIBS, 2, ".", "");
+
+    // CBS
+    $std->vCBS = number_format($this->totalCBS, 2, ".", "");
+
+    // créditos
+    $std->vCredPres = "0.00";
+    $std->vCredPresCondSus = "0.00";
 
     return $std;
   }
@@ -1124,5 +1146,14 @@ abstract class BaseFiscalController extends Connection
     $emissoesEventosModel->setXml($data['xml']);
     $emissoesEventosModel->setProtocolo($data['protocolo']);
     $emissoesEventosModel->create();
+  }
+
+  protected function rateioFrete($produtoValor, $totalProdutos, $valorFrete)
+  {
+    if ($totalProdutos == 0) {
+      return 0;
+    }
+
+    return ($produtoValor / $totalProdutos) * $valorFrete;
   }
 }

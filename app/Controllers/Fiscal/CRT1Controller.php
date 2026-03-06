@@ -26,11 +26,9 @@ class CRT1Controller extends BaseFiscalController
       $this->nfe->tagICMS($this->addICMSCombTag($produto, $index));
       $this->baseTotalIcms += 1000.00;
     } else {
-      // ICMS do Simples Nacional (OBRIGATÓRIO)
       $icmssnData = $this->generateIcmssnData($produto, $item);
       $this->nfe->tagICMSSN($icmssnData);
 
-      // Atualizar base de cálculo total para CSOSNs que possuem
       if (in_array($icmssnData->CSOSN, ['201', '202', '203', '900']) && isset($icmssnData->vBC)) {
         $this->baseTotalIcms += $icmssnData->vBC;
       }
@@ -50,7 +48,7 @@ class CRT1Controller extends BaseFiscalController
     $std = new stdClass();
     $std->item = $item;
     $std->orig = isset($produto['origem']) ? $produto['origem'] : 0;
-    $std->CSOSN = isset($produto['csosn']) ? $produto['csosn'] : '102';
+    $std->CSOSN = isset($produto['csosn']) ? $produto['csosn'] : '900';
 
     switch ($std->CSOSN) {
       case '101': // Tributada pelo Simples Nacional com permissão de crédito
@@ -88,12 +86,12 @@ class CRT1Controller extends BaseFiscalController
         break;
 
       case '900': // Outros
-        $std->modBC = 3;
+        $std->modBC = $produto['mod_bc_icms'] ?? 0;
         $std->vBC = $this->baseCalculo;
         $std->pRedBC = isset($produto['reducao']) ? $produto['reducao'] : 0.00;
-        $std->pICMS = isset($produto['aliquota']) ? $produto['aliquota'] : 0.00;
+        $std->pICMS = isset($produto['aliquota_icms']) ? $produto['aliquota_icms'] : 0.00;
         $std->vICMS = $this->baseCalculo * ($std->pICMS / 100);
-
+        $this->totalIcms += floatval($std->vICMS);
         // ST se houver
         if (isset($produto['st']) && $produto['st'] === true) {
           $std->modBCST = 4;
@@ -108,6 +106,7 @@ class CRT1Controller extends BaseFiscalController
         $std->pCredSN = isset($produto['aliquota_credito']) ? $produto['aliquota_credito'] : 0.00;
         $std->vCredICMSSN = $this->baseCalculo * ($std->pCredSN / 100);
         break;
+
     }
 
     // Cálculo do valor do ICMS para fins de totalização
@@ -159,6 +158,7 @@ class CRT1Controller extends BaseFiscalController
 
     // Base de cálculo
     $std->vBC = $this->baseCalculo;
+    $this->baseIBS += $std->vBC;
 
     /**
      * ==============================
@@ -199,6 +199,10 @@ class CRT1Controller extends BaseFiscalController
       ''
     );
 
+    $this->totalIBSUF += floatval($std->gIBSUF_vIBSUF);
+    $this->totalIBSMun += floatval($std->gIBSMun_vIBSMun);
+    $this->totalCBS += floatval($std->gCBS_vCBS);
+
     $this->totalIBS += floatval($produto['total']) + floatval($std->gIBSUF_vIBSUF) + floatval($std->gIBSMun_vIBSMun) + floatval($std->gCBS_vCBS);
 
     return $std;
@@ -212,6 +216,8 @@ class CRT1Controller extends BaseFiscalController
     $aliquotaCOFINS = $produto['aliquota_cofins'] ?? 0.00;
     $valorCOFINS = $produto['total'] * ($aliquotaCOFINS / 100);
     $cst = $produto['cst_cofins'] ?? '06';
+
+    $cst = UtilsController::validaCST($cst) ? $cst : '06';
 
     $std = new stdClass();
     $std->item = $item;
