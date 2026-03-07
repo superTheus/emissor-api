@@ -66,6 +66,7 @@ abstract class BaseFiscalController extends Connection
   protected $totalCOFINS = 0.00;
   protected $totalImposto = 0.00;
   protected $totalImpostoProduto = 0.00;
+  protected $modalidadeFrete = 9;
 
   public function __construct($data = null)
   {
@@ -259,7 +260,20 @@ abstract class BaseFiscalController extends Connection
       }
 
       $this->nfe->taginfRespTec($this->generateReponsavelTecnico());
-      $this->nfe->tagtransp($this->generateFreteData());
+      $this->nfe->tagtransp($this->generateFreteData($this->data));
+
+      if($this->modalidadeFrete === 9 && isset($this->data['transportadora'])) {
+        $this->nfe->tagtransporta($this->generateTransportadoraData($this->data['transportadora']));
+
+        if(isset($this->data['transportadora']['veiculo'])) {
+          $this->nfe->tagveicTransp($this->generateVeiculoData($this->data['transportadora']['veiculo']));
+        }
+      }
+
+      if(isset($this->data['modalidade_frete'])) {
+        $this->nfe->tagtransp($this->generateVolumeData($this->data));
+      }
+
       $this->nfe->tagpag($this->generateFaturaData());
       $this->nfe->tagautXML($this->generateAutXMLData($this->data));
 
@@ -871,10 +885,42 @@ abstract class BaseFiscalController extends Connection
 
   // ==================== MÉTODOS DE TRANSPORTE E PAGAMENTO ====================
 
-  protected function generateFreteData()
+  protected function generateFreteData($data)
   {
     $std = new stdClass();
-    $std->modFrete = 9;
+    $std->modFrete = $data['modalidade_frete'] ?? 9;
+    $this->modalidadeFrete = $std->modFrete;
+
+    return $std;
+  }
+
+  protected function generateTransportadoraData($data)
+  {
+    $std = new stdClass();
+    $std->CNPJ = $data['cnpj'];
+    $std->xNome = $data['razao_social'];
+    $std->xMun = $data['cidade'];
+    $std->UF = $data['uf'];
+
+    return $std;
+  }
+
+  protected function generateVeiculoData($data)
+  {
+    $std = new stdClass();
+    $std->placa = $data['placa'];
+    $std->UF = $data['uf'];
+
+    return $std;
+  }
+
+  protected function generateVolumeData($data)
+  {
+    $std = new stdClass();
+    $std->qVol = $data['quantidade_volumes'];
+    $std->esp = $data['especie_volume'];
+    $std->pesoL = $data['peso_liquido'];
+    $std->pesoB = $data['peso_bruto'];
 
     return $std;
   }
