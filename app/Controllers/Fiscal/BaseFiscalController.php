@@ -281,9 +281,7 @@ abstract class BaseFiscalController extends Connection
         }
       }
 
-      if(isset($this->data['modalidade_frete'])) {
-        $this->nfe->tagtransp($this->generateVolumeData($this->data));
-      }
+      $this->nfe->tagvol($this->generateVolumeData($this->data));
 
       $this->nfe->tagpag($this->generateFaturaData());
       $this->nfe->tagautXML($this->generateAutXMLData($this->data));
