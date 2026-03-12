@@ -72,6 +72,7 @@ abstract class BaseFiscalController extends Connection
   protected $totalImpostoProduto = 0.00;
   protected $totalFrete = 0.00;
   protected $modalidadeFrete = 9;
+  protected $totalOutrasDespesas = 0;
 
   public function __construct($data = null)
   {
@@ -243,7 +244,7 @@ abstract class BaseFiscalController extends Connection
       foreach ($this->produtos as $index => $produto) {
         $produto['frete'] = $this->rateioFrete($produto['total'], $this->total_produtos, $this->totalFrete);
 
-        $this->baseCalculo = ($produto['total'] - $produto['desconto'] + $produto['frete'] + $produto['acrescimo']);
+        $this->baseCalculo = ($produto['total'] - $produto['desconto'] + $produto['frete'] + ($produto['outras_despesas'] ?? 0));
         $this->origem = $produto['origem'];
 
         $this->nfe->tagprod($this->generateProductData($produto, $index + 1));
@@ -769,8 +770,9 @@ abstract class BaseFiscalController extends Connection
       $std->vDesc = number_format($produto['desconto'], 2, ".", "");
     }
 
-    if (isset($produto['acrescimo']) && $produto['acrescimo'] > 0) {
-      $std->vOutro = number_format($produto['acrescimo'], 2, ".", "");
+    if (isset($produto['outras_despesas']) && $produto['outras_despesas'] > 0) {
+      $std->vOutro = number_format($produto['outras_despesas'], 2, ".", "");
+      $this->totalOutrasDespesas += floatval($produto['outras_despesas']);
     }
 
     return $std;
@@ -866,8 +868,8 @@ abstract class BaseFiscalController extends Connection
     $std->vIPIDevol = 0.00;
     $std->vPIS = $this->totalPIS;
     $std->vCOFINS = $this->totalCOFINS;
-    $std->vOutro = 0.00;
-    $std->vNF = number_format($totalProdutos + $this->totalFrete, 2, ".", "");
+    $std->vOutro = $this->totalOutrasDespesas;
+    $std->vNF = number_format(($totalProdutos + $this->totalFrete + $this->totalOutrasDespesas), 2, ".", "");
     $std->vTotTrib = number_format($this->totalImposto, 2, ".", "");
 
     return $std;
