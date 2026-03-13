@@ -71,6 +71,8 @@ abstract class BaseFiscalController extends Connection
   protected $totalImposto = 0.00;
   protected $totalImpostoProduto = 0.00;
   protected $totalFrete = 0.00;
+  protected $modalidadeFrete = 9;
+  protected $totalOutrasDespesas = 0;
 
   public function __construct($data = null)
   {
@@ -242,7 +244,7 @@ abstract class BaseFiscalController extends Connection
       foreach ($this->produtos as $index => $produto) {
         $produto['frete'] = $this->rateioFrete($produto['total'], $this->total_produtos, $this->totalFrete);
 
-        $this->baseCalculo = ($produto['total'] - $produto['desconto'] + $produto['frete'] + $produto['acrescimo']);
+        $this->baseCalculo = ($produto['total'] - $produto['desconto'] + $produto['frete'] + ($produto['outras_despesas'] ?? 0));
         $this->origem = $produto['origem'];
 
         $this->nfe->tagprod($this->generateProductData($produto, $index + 1));
@@ -270,7 +272,18 @@ abstract class BaseFiscalController extends Connection
       }
 
       $this->nfe->taginfRespTec($this->generateReponsavelTecnico());
-      $this->nfe->tagtransp($this->generateFreteData());
+      $this->nfe->tagtransp($this->generateFreteData($this->data));
+
+      if($this->modalidadeFrete === 9 && isset($this->data['transportadora'])) {
+        $this->nfe->tagtransporta($this->generateTransportadoraData($this->data['transportadora']));
+
+        if(isset($this->data['transportadora']['veiculo'])) {
+          $this->nfe->tagveicTransp($this->generateVeiculoData($this->data['transportadora']['veiculo']));
+        }
+      }
+
+      $this->nfe->tagvol($this->generateVolumeData($this->data));
+
       $this->nfe->tagpag($this->generateFaturaData());
       $this->nfe->tagautXML($this->generateAutXMLData($this->data));
 
@@ -757,8 +770,9 @@ abstract class BaseFiscalController extends Connection
       $std->vDesc = number_format($produto['desconto'], 2, ".", "");
     }
 
-    if (isset($produto['acrescimo']) && $produto['acrescimo'] > 0) {
-      $std->vOutro = number_format($produto['acrescimo'], 2, ".", "");
+    if (isset($produto['outras_despesas']) && $produto['outras_despesas'] > 0) {
+      $std->vOutro = number_format($produto['outras_despesas'], 2, ".", "");
+      $this->totalOutrasDespesas += floatval($produto['outras_despesas']);
     }
 
     return $std;
@@ -854,8 +868,8 @@ abstract class BaseFiscalController extends Connection
     $std->vIPIDevol = 0.00;
     $std->vPIS = $this->totalPIS;
     $std->vCOFINS = $this->totalCOFINS;
-    $std->vOutro = 0.00;
-    $std->vNF = number_format($totalProdutos + $this->totalFrete, 2, ".", "");
+    $std->vOutro = $this->totalOutrasDespesas;
+    $std->vNF = number_format(($totalProdutos + $this->totalFrete + $this->totalOutrasDespesas), 2, ".", "");
     $std->vTotTrib = number_format($this->totalImposto, 2, ".", "");
 
     return $std;
@@ -893,10 +907,42 @@ abstract class BaseFiscalController extends Connection
 
   // ==================== MÉTODOS DE TRANSPORTE E PAGAMENTO ====================
 
-  protected function generateFreteData()
+  protected function generateFreteData($data)
   {
     $std = new stdClass();
-    $std->modFrete = 9;
+    $std->modFrete = $data['modalidade_frete'] ?? 9;
+    $this->modalidadeFrete = $std->modFrete;
+
+    return $std;
+  }
+
+  protected function generateTransportadoraData($data)
+  {
+    $std = new stdClass();
+    $std->CNPJ = $data['cnpj'];
+    $std->xNome = $data['razao_social'];
+    $std->xMun = $data['cidade'];
+    $std->UF = $data['uf'];
+
+    return $std;
+  }
+
+  protected function generateVeiculoData($data)
+  {
+    $std = new stdClass();
+    $std->placa = $data['placa'];
+    $std->UF = $data['uf'];
+
+    return $std;
+  }
+
+  protected function generateVolumeData($data)
+  {
+    $std = new stdClass();
+    $std->qVol = $data['quantidade_volumes'];
+    $std->esp = $data['especie_volume'];
+    $std->pesoL = $data['peso_liquido'];
+    $std->pesoB = $data['peso_bruto'];
 
     return $std;
   }
