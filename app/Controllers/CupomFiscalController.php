@@ -211,7 +211,7 @@ class CupomFiscalController extends Connection
       $emissoesModel = new EmissoesModel($data['chave']);
       $emissao = $emissoesModel->getCurrent();
 
-      $this->tools = new Tools(json_encode($this->config), UtilsController::readPfxForNFePHP($this->certificado, $this->company->getSenha()));
+      $this->tools = new Tools(json_encode($this->config), Certificate::readPfx($this->certificado, $this->company->getSenha()));
       $this->tools->model($this->mod);
 
       $response = $this->tools->sefazCancela($emissao->chave, $data['justificativa'], $emissao->protocolo);
