@@ -48,7 +48,7 @@ class CRT1Controller extends BaseFiscalController
     $std = new stdClass();
     $std->item = $item;
     $std->orig = isset($produto['origem']) ? $produto['origem'] : 0;
-    $std->CSOSN = isset($produto['csosn']) ? $produto['csosn'] : '900';
+    $std->CSOSN = isset($produto['cst_icms']) ? $produto['cst_icms'] : '900';
 
     switch ($std->CSOSN) {
       case '101': // Tributada pelo Simples Nacional com permissão de crédito
