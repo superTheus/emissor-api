@@ -383,12 +383,40 @@ CONF;
     return 0;
   }
 
-  public static function validaCST($cst) {
+  public static function validaCST($cst)
+  {
     $cst = str_pad($cst, 3, '0', STR_PAD_LEFT);
     $validCSTs = [
-      '01', '02', '03', '04', '05', '06', '07', '08', '09'
+      '01',
+      '02',
+      '03',
+      '04',
+      '05',
+      '06',
+      '07',
+      '08',
+      '09'
     ];
 
     return in_array($cst, $validCSTs);
+  }
+
+  public static function validaCSOSN($csosn)
+  {
+    $csosn = str_pad($csosn, 3, '0', STR_PAD_LEFT);
+    $validCSOSNs = [
+      '101',
+      '102',
+      '103',
+      '201',
+      '202',
+      '203',
+      '300',
+      '400',
+      '500',
+      '900'
+    ];
+
+    return in_array($csosn, $validCSOSNs);
   }
 }
