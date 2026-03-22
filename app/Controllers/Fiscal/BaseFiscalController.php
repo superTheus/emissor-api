@@ -924,10 +924,10 @@ abstract class BaseFiscalController extends Connection
   protected function generateTransportadoraData($data)
   {
     $std = new stdClass();
-    $std->CNPJ = $data['cnpj'];
-    $std->xNome = $data['razao_social'];
-    $std->xMun = $data['cidade'];
-    $std->UF = $data['uf'];
+    $std->CNPJ = $data['cnpj'] ?? '';
+    $std->xNome = $data['razao_social'] ?? '';
+    $std->xMun = $data['cidade'] ?? '';
+    $std->UF = $data['uf'] ?? '';
 
     return $std;
   }
@@ -935,8 +935,8 @@ abstract class BaseFiscalController extends Connection
   protected function generateVeiculoData($data)
   {
     $std = new stdClass();
-    $std->placa = $data['placa'];
-    $std->UF = $data['uf'];
+    $std->placa = $data['placa'] ?? '';
+    $std->UF = $data['uf'] ?? '';
 
     return $std;
   }
@@ -944,10 +944,10 @@ abstract class BaseFiscalController extends Connection
   protected function generateVolumeData($data)
   {
     $std = new stdClass();
-    $std->qVol = $data['quantidade_volumes'];
-    $std->esp = $data['especie_volume'];
-    $std->pesoL = $data['peso_liquido'];
-    $std->pesoB = $data['peso_bruto'];
+    $std->qVol = $data['quantidade_volumes'] ?? 0;
+    $std->esp = $data['especie_volume'] ?? '';
+    $std->pesoL = $data['peso_liquido'] ?? 0;
+    $std->pesoB = $data['peso_bruto'] ?? 0;
 
     return $std;
   }
