@@ -328,9 +328,37 @@ CONF;
     return $fileName;
   }
 
+  public static function uploadXmlPreview($xml, $chave)
+  {
+    $folderPath = "app/storage/fiscal/xml/preview";
+    $fileName = "xml_" . $chave . ".xml";
+
+    if (!file_exists($folderPath)) {
+      mkdir($folderPath, 0777, true);
+    }
+
+    file_put_contents($folderPath . "/" . $fileName, $xml);
+
+    return $fileName;
+  }
+
   public static function uploadPdf($pdf, $chave)
   {
     $folderPath = "app/storage/fiscal/pdf";
+    $fileName = "pdf_" . $chave . ".pdf";
+
+    if (!file_exists($folderPath)) {
+      mkdir($folderPath, 0777, true);
+    }
+
+    file_put_contents($folderPath . "/" . $fileName, $pdf);
+
+    return $folderPath . "/" . $fileName;
+  }
+
+  public static function uploadPdfPreview($pdf, $chave)
+  {
+    $folderPath = "app/storage/fiscal/pdf/preview";
     $fileName = "pdf_" . $chave . ".pdf";
 
     if (!file_exists($folderPath)) {

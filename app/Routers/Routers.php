@@ -90,14 +90,20 @@ class Routers
 
         $router->post('/cancel', function () {
           $data = json_decode(file_get_contents('php://input'), true);
-          $cupomfiscalController = new FiscalController($data);
-          $cupomfiscalController->cancelNfe($data);
+          $fiscalController = new FiscalController($data);
+          $fiscalController->cancelNfe($data);
         });
 
         $router->post('/carta', function () {
           $data = json_decode(file_get_contents('php://input'), true);
           $fiscalController = new FiscalController($data);
           $fiscalController->gerarCC($data);
+        });
+
+        $router->post('/preview', function () {
+          $data = json_decode(file_get_contents('php://input'), true);
+          $fiscalController = new FiscalController($data);
+          $fiscalController->createNfe(true);
         });
       });
 

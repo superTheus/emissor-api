@@ -99,9 +99,9 @@ class FiscalController
     return $this->makeHandlerByCrt($crt, $data);
   }
 
-  public function createNfe()
+  public function createNfe($preview = false)
   {
-    return $this->handler->createNfe();
+    return $this->handler->createNfe($preview);
   }
 
   public function cancelNfe($data)

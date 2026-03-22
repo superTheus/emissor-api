@@ -211,7 +211,7 @@ abstract class BaseFiscalController extends Connection
   /**
    * Cria a NFe chamando o método abstrato de impostos para cada produto
    */
-  public function createNfe()
+  public function createNfe($onlyPreview = false)
   {
     if (empty($this->data) || !isset($this->data['cnpj']) || !isset($this->data['cliente'])) {
       http_response_code(400);
@@ -271,13 +271,13 @@ abstract class BaseFiscalController extends Connection
         $this->nfe->tagrefNFe($this->generateReferencia($this->data['nota_referencia']));
       }
 
-      $this->nfe->taginfRespTec($this->generateReponsavelTecnico());
+      $this->nfe->taginfRespTec($this->generateResponsavelTecnico());
       $this->nfe->tagtransp($this->generateFreteData($this->data));
 
-      if($this->modalidadeFrete === 9 && isset($this->data['transportadora'])) {
+      if ($this->modalidadeFrete === 9 && isset($this->data['transportadora'])) {
         $this->nfe->tagtransporta($this->generateTransportadoraData($this->data['transportadora']));
 
-        if(isset($this->data['transportadora']['veiculo'])) {
+        if (isset($this->data['transportadora']['veiculo'])) {
           $this->nfe->tagveicTransp($this->generateVeiculoData($this->data['transportadora']['veiculo']));
         }
       }
@@ -293,6 +293,11 @@ abstract class BaseFiscalController extends Connection
 
       $this->currentXML = $this->nfe->getXML();
       $this->currentXML = $this->tools->signNFe($this->currentXML);
+
+      if ($onlyPreview) {
+        $this->processarPreview();
+        return;
+      }
 
       $this->response = $this->tools->sefazEnviaLote([$this->currentXML], str_pad(1, 15, '0', STR_PAD_LEFT), 1);
 
@@ -643,7 +648,7 @@ abstract class BaseFiscalController extends Connection
       //   $std->IE = $ieInfo['IE'];
       // }
 
-      if(isset($cliente['inscricao_estadual'])) {
+      if (isset($cliente['inscricao_estadual'])) {
         $std->IE = $cliente['inscricao_estadual'];
       }
     } else {
@@ -977,7 +982,7 @@ abstract class BaseFiscalController extends Connection
     return $std;
   }
 
-  protected function generateReponsavelTecnico()
+  protected function generateResponsavelTecnico()
   {
     $std = new stdClass();
     $std->CNPJ = "45730598000102";
@@ -1126,6 +1131,30 @@ abstract class BaseFiscalController extends Connection
 
     $this->atualizaNumero();
     $this->salvaEmissao();
+
+    http_response_code(200);
+    echo json_encode([
+      "chave" => $this->currentChave,
+      "avisos" => $this->warnings,
+      "protocolo" => $this->numeroProtocolo,
+      "link" => $_ENV['URL_BASE'] . $link,
+      "xml" => $this->currentXML,
+      "pdf" => base64_encode($this->currentPDF)
+    ]);
+  }
+
+  protected function processarPreview()
+  {
+    $danfe = new Danfe($this->currentXML);
+    // $danfe->debugMode(true);
+    $danfe->setDefaultFont('arial');
+    $danfe->creditsIntegratorFooter('Estoque Premium - Sistema de Gestão Comercial');
+    $this->currentPDF = $danfe->render();
+    UtilsController::uploadXmlPreview($this->currentXML, $this->currentChave);
+    $link = UtilsController::uploadPdfPreview($this->currentPDF, $this->currentChave);
+
+    // $this->atualizaNumero();
+    // $this->salvaEmissao();
 
     http_response_code(200);
     echo json_encode([
