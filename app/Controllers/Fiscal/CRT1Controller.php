@@ -94,6 +94,7 @@ class CRT1Controller extends BaseFiscalController
         $std->pICMS = isset($produto['aliquota_icms']) ? $produto['aliquota_icms'] : 0.00;
         $std->vICMS = $this->baseCalculo * ($std->pICMS / 100);
         $this->totalIcms += floatval($std->vICMS);
+        $this->totalImposto += floatval($std->vICMS);
         // ST se houver
         if (isset($produto['st']) && $produto['st'] === true) {
           $std->modBCST = 4;

@@ -1151,8 +1151,7 @@ abstract class BaseFiscalController extends Connection
     $danfe->creditsIntegratorFooter('Estoque Premium - Sistema de Gestão Comercial');
     $this->currentPDF = $danfe->render();
     UtilsController::uploadXmlPreview($this->currentXML, $this->currentChave);
-    $link = UtilsController::uploadPdfPreview($this->currentPDF, $this->currentChave);
-
+    $link = UtilsController::uploadPdfPreview($this->currentPDF, $this->currentChave . uniqid());
     // $this->atualizaNumero();
     // $this->salvaEmissao();
 
