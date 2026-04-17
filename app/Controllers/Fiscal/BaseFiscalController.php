@@ -242,7 +242,7 @@ abstract class BaseFiscalController extends Connection
       }
 
       foreach ($this->produtos as $index => $produto) {
-        $produto['frete'] = $this->rateioFrete($produto['total'], $this->total_produtos, $this->totalFrete);
+        $produto['frete'] = isset($produto['frete']) && $produto['frete'] ? $produto['frete'] : $this->rateioFrete($produto['total'], $this->total_produtos, $this->totalFrete);
 
         $this->baseCalculo = ($produto['total'] - $produto['desconto'] + $produto['frete'] + ($produto['outras_despesas'] ?? 0));
         $this->origem = $produto['origem'];
@@ -292,12 +292,13 @@ abstract class BaseFiscalController extends Connection
       }
 
       $this->currentXML = $this->nfe->getXML();
-      $this->currentXML = $this->tools->signNFe($this->currentXML);
 
       if ($onlyPreview) {
         $this->processarPreview();
         return;
       }
+
+      $this->currentXML = $this->tools->signNFe($this->currentXML);
 
       $this->response = $this->tools->sefazEnviaLote([$this->currentXML], str_pad(1, 15, '0', STR_PAD_LEFT), 1);
 
