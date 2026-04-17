@@ -120,7 +120,7 @@ class CRT4Controller extends BaseFiscalController
   {
     $std = parent::generateDataCompany();
     $std->CRT = '4'; // Força CRT 4 para MEI
-    $std->IE = 'ISENTO'; // MEI não possui IE
+    // $std->IE = 'ISENTO'; // MEI não possui IE
 
     return $std;
   }
