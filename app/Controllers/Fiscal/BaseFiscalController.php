@@ -19,10 +19,6 @@ use NFePHP\NFe\Make;
 use NFePHP\NFe\Tools;
 use stdClass;
 
-/**
- * Classe base abstrata para emissão de NFe
- * Contém toda a lógica comum compartilhada entre os diferentes regimes tributários
- */
 abstract class BaseFiscalController extends Connection
 {
   protected $nfe;

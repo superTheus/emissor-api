@@ -9,6 +9,7 @@ use App\Controllers\CupomFiscalController;
 use App\Controllers\EmissoesController;
 use App\Controllers\EstadosController;
 use App\Controllers\FiscalController;
+use App\Controllers\Fiscal\NotaServicoController;
 use App\Controllers\FormaPagamentoController;
 use App\Controllers\IbptController;
 use App\Controllers\MunicipiosController;
@@ -118,6 +119,18 @@ class Routers
           $data = json_decode(file_get_contents('php://input'), true);
           $cupomfiscalController = new CupomFiscalController($data);
           $cupomfiscalController->cancelNfce($data);
+        });
+      });
+
+      $router->mount('/nfse', function () use ($router) {
+        $router->get('/', function () {
+          echo 'Emitir NFS-e';
+        });
+
+        $router->post('/', function () {
+          $data = json_decode(file_get_contents('php://input'), true);
+          $notaServicoController = new NotaServicoController($data);
+          $notaServicoController->emitir();
         });
       });
 
