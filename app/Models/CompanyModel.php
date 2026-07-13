@@ -215,10 +215,12 @@ class CompanyModel extends Connection
       :numero_nfe_homologacao, :crt, :serie_nfse, :numero_nfse, :serie_nfse_homologacao, :numero_nfse_homologacao
     )";
 
+    $cnpj = preg_replace('/\D/', '', $data['cnpj']);
+
     try {
       $stmt = $this->conn->prepare($sql);
       $stmt->bindParam(':tpamb', $data['tpamb']);
-      $stmt->bindParam(':cnpj', preg_replace('/\D/', '', $data['cnpj']));
+      $stmt->bindParam(':cnpj', $cnpj);
       $stmt->bindParam(':razao_social', $data['razao_social']);
       $stmt->bindParam(':nome_fantasia', $data['nome_fantasia']);
       $stmt->bindParam(':telefone', $data['telefone']);
