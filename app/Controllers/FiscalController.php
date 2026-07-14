@@ -2,127 +2,69 @@
 
 namespace App\Controllers;
 
+use App\Controllers\Fiscal\BaseFiscalController;
 use App\Controllers\Fiscal\CRT1Controller;
 use App\Controllers\Fiscal\CRT2Controller;
 use App\Controllers\Fiscal\CRT3Controller;
 use App\Controllers\Fiscal\CRT4Controller;
+use App\Http\HttpException;
 use App\Models\CompanyModel;
-use Dotenv\Dotenv;
 
-class FiscalController
+final class FiscalController
 {
-  private $data;
-  private $crt;
-  private $handler;
+  private BaseFiscalController $handler;
 
   public function __construct($data = null)
   {
-    $dotenv = Dotenv::createImmutable(dirname(__DIR__, 2));
-    $dotenv->load();
-
-    if (!$data) {
-      http_response_code(400);
-      echo json_encode(['error' => 'Dados não fornecidos']);
-      exit;
+    if (!is_array($data) || $data === []) {
+      throw new HttpException('Dados não fornecidos.', 400);
     }
 
-    if (!isset($data['cnpj']) || empty($data['cnpj'])) {
-      http_response_code(400);
-      echo json_encode(['error' => 'CNPJ não informado']);
-      exit;
+    if (empty($data['cnpj'])) {
+      throw new HttpException('CNPJ não informado.', 422);
     }
 
-    $this->data = $data;
-
-    $crt = $this->resolveCrtByCnpj($data['cnpj']);
-    if ($crt === null) {
-      http_response_code(404);
-      echo json_encode(['error' => 'Empresa não encontrada']);
-      exit;
-    }
-
-    $this->crt = $crt;
-    $this->handler = $this->makeHandlerByCrt($this->crt, $this->data);
+    $this->handler = $this->handlerFor($data);
   }
 
-  private function resolveCrtByCnpj($cnpj)
-  {
-    $companyModel = new CompanyModel();
-    $company = $companyModel->find([
-      "cnpj" => UtilsController::soNumero($cnpj)
-    ]);
-
-    if (!$company) {
-      return null;
-    }
-
-    $companyObj = new CompanyModel($company[0]['id']);
-    return (int)$companyObj->getCrt();
-  }
-
-  private function makeHandlerByCrt($crt, $data)
-  {
-    switch ((int)$crt) {
-      case 1:
-        return new CRT1Controller($data);
-      case 2:
-        return new CRT2Controller($data);
-      case 3:
-        return new CRT3Controller($data);
-      case 4:
-        return new CRT4Controller($data);
-      default:
-        http_response_code(400);
-        echo json_encode([
-          'error' => 'CRT inválido ou não suportado',
-          'crt' => $crt
-        ]);
-        exit;
-    }
-  }
-
-  private function handlerFromRequestData($data)
-  {
-    if (!isset($data['cnpj']) || empty($data['cnpj'])) {
-      http_response_code(400);
-      echo json_encode(['error' => 'CNPJ não informado']);
-      return null;
-    }
-
-    $crt = $this->resolveCrtByCnpj($data['cnpj']);
-    if ($crt === null) {
-      http_response_code(404);
-      echo json_encode(['error' => 'Empresa não encontrada']);
-      return null;
-    }
-
-    return $this->makeHandlerByCrt($crt, $data);
-  }
-
-  public function createNfe($preview = false)
+  public function createNfe(bool $preview = false)
   {
     return $this->handler->createNfe($preview);
   }
 
-  public function cancelNfe($data)
+  public function cancelNfe(array $data)
   {
-    // Para cancelamento, o payload geralmente é diferente da emissão.
-    // Então resolvemos o handler baseado no CNPJ do payload.
-    $handler = $this->handlerFromRequestData($data);
-    if (!$handler) {
-      return;
-    }
-
-    return $handler->cancelNfe($data);
+    return $this->handler->cancelNfe($data);
   }
 
-  public function gerarCC($data)
+  public function gerarCC(array $data)
   {
-    $handler = $this->handlerFromRequestData($data);
-    if (!$handler) {
-      return;
+    return $this->handler->gerarCC($data);
+  }
+
+  private function handlerFor(array $data): BaseFiscalController
+  {
+    $crt = $this->resolveCrtByCnpj($data['cnpj']);
+
+    return match ($crt) {
+      1 => new CRT1Controller($data),
+      2 => new CRT2Controller($data),
+      3 => new CRT3Controller($data),
+      4 => new CRT4Controller($data),
+      default => throw new HttpException('CRT inválido ou não suportado.', 422, ['crt' => $crt]),
+    };
+  }
+
+  private function resolveCrtByCnpj(string $cnpj): int
+  {
+    $companies = (new CompanyModel())->find([
+      'cnpj' => UtilsController::soNumero($cnpj),
+    ], 1);
+
+    if ($companies === []) {
+      throw new HttpException('Empresa não encontrada.', 404);
     }
 
-    return $handler->gerarCC($data);
+    return (int) (new CompanyModel($companies[0]['id']))->getCrt();
   }
 }

@@ -2,10 +2,13 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\FindsByFilters;
 use stdClass;
 
 class EstadosModel extends Connection
 {
+  use FindsByFilters;
+
   private $conn;
   private $id;
   private $nome;
@@ -33,12 +36,15 @@ class EstadosModel extends Connection
       $stmt->execute();
 
       $cest = $stmt->fetch(\PDO::FETCH_ASSOC);
+      if (!$cest) {
+        throw new \RuntimeException('Estado não encontrado.');
+      }
 
       $this->setNome($cest['nome']);
       $this->setUf($cest['uf']);
       $this->setCodigo_ibge($cest['codigo_ibge']);
     } catch (\PDOException $e) {
-      echo $e->getMessage();
+      throw new \RuntimeException('Erro ao carregar o estado.', 0, $e);
     }
   }
 
@@ -54,38 +60,12 @@ class EstadosModel extends Connection
 
   public function find($filter = [], $limit = null)
   {
-    $sql = "SELECT * FROM {$this->table}";
+    return $this->findByFilters($filter, $limit);
+  }
 
-    if (!empty($filter)) {
-      $sql .= " WHERE ";
-      $sql .= implode(" AND ", array_map(function ($column) {
-        return "$column = :$column";
-      }, array_keys($filter)));
-    }
-
-    if ($limit !== null) {
-      $sql .= " LIMIT :limit";
-    }
-
-    try {
-      $stmt = $this->conn->prepare($sql);
-
-      if (!empty($filter)) {
-        foreach ($filter as $column => $value) {
-          $stmt->bindValue(":$column", $value);
-        }
-      }
-
-      if ($limit !== null) {
-        $stmt->bindValue(':limit', (int) $limit, \PDO::PARAM_INT);
-      }
-
-      $stmt->execute();
-
-      return $stmt->fetchAll(\PDO::FETCH_ASSOC);
-    } catch (\PDOException $e) {
-      echo $e->getMessage();
-    }
+  protected function filterableColumns(): array
+  {
+    return ['id', 'nome', 'uf', 'codigo_ibge'];
   }
 
   /**

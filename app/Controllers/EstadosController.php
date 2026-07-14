@@ -2,71 +2,60 @@
 
 namespace App\Controllers;
 
+use App\Http\JsonResponse;
 use App\Models\EstadosModel;
 
-class EstadosController
+final class EstadosController
 {
-  protected $estadosModel;
+  private EstadosModel $model;
 
   public function __construct($id = null)
   {
-    $this->estadosModel = new EstadosModel($id ? $id : null);
+    $this->model = new EstadosModel($id);
   }
 
   public function findOnly($data)
   {
+    $results = $this->search($data);
+
+    return count($results) === 1 ? $results[0] : $results;
+  }
+
+  public function find($data): void
+  {
     try {
-      $filter = $data && isset($data['filter']) ? $data['filter'] : null;
-      $limit = $data && isset($data['limit']) ? $data['limit'] : null;
-      $results = $this->estadosModel->find($filter, $limit);
-
-      if ($results && count($results) === 1) {
-        $results = $results[0];
-      }
-
-      return $results;
-    } catch (\Exception $e) {
-      throw new \Exception($e->getMessage());
+      $results = $this->search($data);
+      JsonResponse::send(count($results) === 1 ? $results[0] : $results);
+    } catch (\InvalidArgumentException $exception) {
+      JsonResponse::error($exception->getMessage(), 422);
+    } catch (\Throwable $exception) {
+      error_log($exception->getMessage());
+      JsonResponse::error('Erro interno ao consultar estados.', 500);
     }
   }
 
-  public function find($data)
+  public function findunique($data): void
   {
     try {
-      $filter = $data && isset($data['filter']) ? $data['filter'] : null;
-      $limit = $data && isset($data['limit']) ? $data['limit'] : null;
-      $results = $this->estadosModel->find($filter, $limit);
-
-      if($results && count($results) === 1) {
-        $results = $results[0];
+      $results = $this->search($data);
+      if ($results === []) {
+        JsonResponse::error('Estado não encontrado.', 404);
+        return;
       }
 
-      http_response_code(200);
-      echo json_encode($results);
-    } catch (\Exception $e) {
-      http_response_code(500); // Internal Server Error
-      echo json_encode(['error' => $e->getMessage()]);
+      JsonResponse::send($results[0]);
+    } catch (\InvalidArgumentException $exception) {
+      JsonResponse::error($exception->getMessage(), 422);
+    } catch (\Throwable $exception) {
+      error_log($exception->getMessage());
+      JsonResponse::error('Erro interno ao consultar o estado.', 500);
     }
   }
 
-  public function findunique($data)
+  private function search($data): array
   {
-    try {
-      $filter = $data && isset($data['filter']) ? $data['filter'] : null;
-      $limit = $data && isset($data['limit']) ? $data['limit'] : null;
-      $results = $this->estadosModel->find($filter, $limit);
+    $data = is_array($data) ? $data : [];
 
-      if ($results && count($results) > 0) {
-        $results = $results[0];
-      } else {
-        throw new \Exception("Estado não encontrado");
-      }
-
-      http_response_code(200);
-      echo json_encode($results);
-    } catch (\Exception $e) {
-      http_response_code(401);
-      echo $e->getMessage();
-    }
+    return $this->model->find($data['filter'] ?? [], $data['limit'] ?? null);
   }
 }

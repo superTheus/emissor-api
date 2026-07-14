@@ -30,8 +30,9 @@ class CRT4Controller extends BaseFiscalController
     // Verificar se é combustível (caso raro para MEI, mas mantido por consistência)
     if (isset($produto['codigo_anp']) && !empty($produto['codigo_anp'])) {
       $this->nfe->tagcomb($this->addCombustivelTag($produto, $index));
-      $this->nfe->tagICMS($this->addICMSCombTag($produto, $index));
-      $this->baseTotalIcms += 1000.00;
+      $icmsCombustivel = $this->addICMSCombTag($produto, $index);
+      $this->nfe->tagICMS($icmsCombustivel);
+      $this->baseTotalIcms += floatval($icmsCombustivel->vBC ?? 0);
     } else {
       // ICMS do Simples Nacional para MEI
       // MEI usa CSOSN 102 (sem permissão de crédito) na maioria dos casos

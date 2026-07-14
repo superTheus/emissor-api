@@ -8,8 +8,8 @@ use App\Controllers\CompanyController;
 use App\Controllers\CupomFiscalController;
 use App\Controllers\EmissoesController;
 use App\Controllers\EstadosController;
-use App\Controllers\FiscalController;
 use App\Controllers\Fiscal\NotaServicoController;
+use App\Controllers\FiscalController;
 use App\Controllers\FormaPagamentoController;
 use App\Controllers\IbptController;
 use App\Controllers\MunicipiosController;
@@ -18,270 +18,188 @@ use App\Controllers\OrigemController;
 use App\Controllers\SituacaoTributariaController;
 use App\Controllers\UnidadesController;
 use App\Controllers\UtilsController;
+use App\Http\ApiTokenMiddleware;
+use App\Http\JsonRequest;
+use App\Http\JsonResponse;
 use Bramus\Router\Router;
 
-header('Content-Type: application/json');
-
-class Routers
+final class Routers
 {
-  public static function execute($callback = null)
+  public static function execute($callback = null): void
   {
     $router = new Router();
 
-    $router->set404(function () {
-      header($_SERVER['SERVER_PROTOCOL'] . ' 404 Not Found');
-      echo '404, Rota não encontrada';
+    $router->set404(static function (): void {
+      JsonResponse::error('Rota não encontrada.', 404);
     });
 
-    $router->before('GET', '/.*', function () {
+    $router->before('GET', '/.*', static function (): void {
       header('X-Powered-By: bramus/router');
     });
-
-    $router->get('/', function () {
-      echo 'Home';
+    $router->before('GET|POST|PUT|PATCH|DELETE', '/.*', static function (): void {
+      ApiTokenMiddleware::handle();
     });
 
-    $router->post('/', function () {
-      echo 'Home';
-    });
+    $router->get('/', static fn() => JsonResponse::send(['message' => 'Emissor API']));
+    $router->post('/', static fn() => JsonResponse::send(['message' => 'Emissor API']));
 
-    $router->mount('/company', function () use ($router) {
-      $router->get('/', function () {
-        echo 'Empresa';
+    $router->mount('/company', static function () use ($router): void {
+      $router->get('/', static fn() => JsonResponse::send(['resource' => 'company']));
+      $router->post('/', static fn() => JsonResponse::send(['resource' => 'company']));
+
+      $router->post('/list', static function (): void {
+        (new CompanyController())->find(self::requestData());
       });
 
-      $router->post('/', function () {
-        echo 'Empresa';
+      $router->post('/create', static function (): void {
+        (new CompanyController())->create(self::requestData());
       });
 
-      $router->post('/list', function () {
-        $data = json_decode(file_get_contents('php://input'), true);
-        $userController = new CompanyController();
-        $userController->find($data);
-      });
-
-      $router->post('/create', function () {
-        $data = json_decode(file_get_contents('php://input'), true);
-        $userController = new CompanyController();
-        $userController->create($data);
-      });
-
-      $router->put('/update/{id}', function ($id) {
-        $data = json_decode(file_get_contents('php://input'), true);
-        $userController = new CompanyController($id);
-        $userController->update($data);
+      $router->put('/update/{id}', static function ($id): void {
+        (new CompanyController($id))->update(self::requestData());
       });
     });
 
-    $router->mount('/fiscal', function () use ($router) {
-      $router->get('/', function () {
-        echo 'Fiscal';
-      });
+    $router->mount('/fiscal', static function () use ($router): void {
+      $router->get('/', static fn() => JsonResponse::send(['resource' => 'fiscal']));
 
-      $router->mount('/nfe', function () use ($router) {
-        $router->get('/', function () {
-          echo "Emitir NFe";
+      $router->mount('/nfe', static function () use ($router): void {
+        $router->get('/', static fn() => JsonResponse::send(['resource' => 'nfe']));
+
+        $router->post('/', static function (): void {
+          (new FiscalController(self::requestData()))->createNfe();
         });
 
-        $router->post('/', function () {
-          $data = json_decode(file_get_contents('php://input'), true);
-          $fiscalController = new FiscalController($data);
-          $fiscalController->createNfe();
+        $router->post('/cancel', static function (): void {
+          $data = self::requestData();
+          (new FiscalController($data))->cancelNfe($data);
         });
 
-        $router->post('/cancel', function () {
-          $data = json_decode(file_get_contents('php://input'), true);
-          $fiscalController = new FiscalController($data);
-          $fiscalController->cancelNfe($data);
+        $router->post('/carta', static function (): void {
+          $data = self::requestData();
+          (new FiscalController($data))->gerarCC($data);
         });
 
-        $router->post('/carta', function () {
-          $data = json_decode(file_get_contents('php://input'), true);
-          $fiscalController = new FiscalController($data);
-          $fiscalController->gerarCC($data);
-        });
-
-        $router->post('/preview', function () {
-          $data = json_decode(file_get_contents('php://input'), true);
-          $fiscalController = new FiscalController($data);
-          $fiscalController->createNfe(true);
+        $router->post('/preview', static function (): void {
+          (new FiscalController(self::requestData()))->createNfe(true);
         });
       });
 
-      $router->mount('/nfce', function () use ($router) {
-        $router->post('/', function () {
-          $data = json_decode(file_get_contents('php://input'), true);
-          $cupomfiscalController = new CupomFiscalController($data);
-          $cupomfiscalController->createNfe();
+      $router->mount('/nfce', static function () use ($router): void {
+        $router->post('/', static function (): void {
+          (new CupomFiscalController(self::requestData()))->createNfe();
         });
 
-        $router->post('/cancel', function () {
-          $data = json_decode(file_get_contents('php://input'), true);
-          $cupomfiscalController = new CupomFiscalController($data);
-          $cupomfiscalController->cancelNfce($data);
+        $router->post('/cancel', static function (): void {
+          $data = self::requestData();
+          (new CupomFiscalController($data))->cancelNfce($data);
         });
       });
 
-      $router->mount('/nfse', function () use ($router) {
-        $router->get('/', function () {
-          echo 'Emitir NFS-e';
-        });
-
-        $router->post('/', function () {
-          $data = json_decode(file_get_contents('php://input'), true);
-          $notaServicoController = new NotaServicoController($data);
-          $notaServicoController->emitir();
+      $router->mount('/nfse', static function () use ($router): void {
+        $router->get('/', static fn() => JsonResponse::send(['resource' => 'nfse']));
+        $router->post('/', static function (): void {
+          (new NotaServicoController(self::requestData()))->emitir();
         });
       });
 
-      $router->post('/emissoes', function () {
-        $data = json_decode(file_get_contents('php://input'), true);
-        $emissoesController = new EmissoesController();
-        $emissoesController->find([
-          "filter" => $data
-        ]);
+      $router->post('/emissoes', static function (): void {
+        (new EmissoesController())->find(self::requestData());
       });
 
-      $router->mount('/certicate', function () use ($router) {
-        $router->get('/', function () {
-          echo 'Certificado';
+      $router->mount('/certicate', static function () use ($router): void {
+        $router->get('/', static fn() => JsonResponse::send(['resource' => 'certificate']));
+
+        $router->post('/test', static function (): void {
+          $data = self::requestData();
+          (new EmissoesController())->verifyCertificate(
+            $data['certificado'] ?? null,
+            $data['senha'] ?? null
+          );
         });
 
-        $router->post('/test', function () {
-          $data = json_decode(file_get_contents('php://input'), true);
-          (new EmissoesController)->verifyCertificate($data['certificado'], $data['senha']);
-        });
-
-        $router->get('/test/{cnpj}', function ($cnpj) {
+        $router->get('/test/{cnpj}', static function ($cnpj): void {
           UtilsController::testCertificate($cnpj);
         });
       });
     });
 
-    $router->mount('/cest', function () use ($router) {
-      $router->post('/', function () {
-        $data = json_decode(file_get_contents('php://input'), true);
-        $cestController = new CestController();
-        $cestController->find($data);
+    self::mountLookup($router, '/cest', CestController::class);
+    self::mountLookup($router, '/cfop', CfopController::class);
+    self::mountLookup($router, '/formas', FormaPagamentoController::class);
+    self::mountLookup($router, '/ibpt', IbptController::class);
+    self::mountLookup($router, '/ncm', NcmController::class);
+    self::mountLookup($router, '/origem', OrigemController::class);
+    self::mountLookup($router, '/situacao', SituacaoTributariaController::class);
+    self::mountLookup($router, '/unidades', UnidadesController::class);
+
+    $router->mount('/estados', static function () use ($router): void {
+      $router->post('/', static function (): void {
+        (new EstadosController())->find(self::requestData());
+      });
+
+      $router->post('/{uf}', static function ($uf): void {
+        (new EstadosController())->find(['filter' => ['uf' => $uf]]);
+      });
+
+      $router->get('/{uf}', static function ($uf): void {
+        (new EstadosController())->findunique(['filter' => ['uf' => $uf]]);
       });
     });
 
-    $router->mount('/cfop', function () use ($router) {
-      $router->post('/', function () {
-        $data = json_decode(file_get_contents('php://input'), true);
-        $cfopController = new CfopController();
-        $cfopController->find($data);
-      });
-    });
-
-    $router->mount('/formas', function () use ($router) {
-      $router->post('/', function () {
-        $data = json_decode(file_get_contents('php://input'), true);
-        $formaPagamentoController = new FormaPagamentoController();
-        $formaPagamentoController->find($data);
-      });
-    });
-
-    $router->mount('/ibpt', function () use ($router) {
-      $router->post('/', function () {
-        $data = json_decode(file_get_contents('php://input'), true);
-        $ibptController = new IbptController();
-        $ibptController->find($data);
-      });
-    });
-
-    $router->mount('/ncm', function () use ($router) {
-      $router->post('/', function () {
-        $data = json_decode(file_get_contents('php://input'), true);
-        $ncmController = new NcmController();
-        $ncmController->find($data);
-      });
-    });
-
-    $router->mount('/origem', function () use ($router) {
-      $router->post('/', function () {
-        $data = json_decode(file_get_contents('php://input'), true);
-        $origemController = new OrigemController();
-        $origemController->find($data);
-      });
-    });
-
-    $router->mount('/situacao', function () use ($router) {
-      $router->post('/', function () {
-        $data = json_decode(file_get_contents('php://input'), true);
-        $situacaoTributariaController = new SituacaoTributariaController();
-        $situacaoTributariaController->find($data);
-      });
-    });
-
-    $router->mount('/unidades', function () use ($router) {
-      $router->post('/', function () {
-        $data = json_decode(file_get_contents('php://input'), true);
-        $unidadesTributariaController = new UnidadesController();
-        $unidadesTributariaController->find($data);
-      });
-    });
-
-    $router->mount('/estados', function () use ($router) {
-      $router->post('/', function () {
-        $data = json_decode(file_get_contents('php://input'), true);
-        $estadosController = new EstadosController();
-        $estadosController->find($data);
+    $router->mount('/municipios', static function () use ($router): void {
+      $router->post('/', static function (): void {
+        (new MunicipiosController())->find(self::requestData());
       });
 
-      $router->post('/{uf}', function ($uf) {
-        $estadosController = new EstadosController();
-        $estadosController->find([
-          "filter" => ["uf" => $uf]
-        ]);
-      });
+      $router->get('/{uf}/{cidade}', static function ($uf, $cidade): void {
+        try {
+          $estado = (new EstadosController())->findOnly([
+            'filter' => ['uf' => $uf],
+            'limit' => 1,
+          ]);
 
-      $router->get('/{uf}', function ($uf) {
-        $estadosController = new EstadosController();
-        $estadosController->findunique([
-          "filter" => ["uf" => $uf]
-        ]);
-      });
-    });
+          if (!$estado || !isset($estado['id'])) {
+            JsonResponse::error('Estado não encontrado.', 404);
+            return;
+          }
 
-    $router->mount('/municipios', function () use ($router) {
-      $router->post('/', function () {
-        $data = json_decode(file_get_contents('php://input'), true);
-        $municipiosController = new MunicipiosController();
-        $municipiosController->find($data);
-      });
-
-      $router->get('/{uf}/{cidade}', function ($uf, $cidade) {
-        $municipiosController = new MunicipiosController();
-
-        $estadosController = new EstadosController();
-        $estado = $estadosController->findOnly([
-          "filter" => [
-            "uf" => $uf
-          ],
-          "limit" => 1
-        ]);
-
-        if (!$estado || count($estado) === 0) {
-          http_response_code(404);
-          echo json_encode(['error' => 'Estado não encontrado']);
-          return;
+          (new MunicipiosController())->findunique([
+            'filter' => [
+              'nome' => $cidade,
+              'id_estado' => $estado['id'],
+            ],
+          ]);
+        } catch (\Throwable $exception) {
+          error_log($exception->getMessage());
+          JsonResponse::error('Erro interno ao consultar o município.', 500);
         }
-
-        $municipiosController->findunique([
-          "filter" => [
-            "nome" => $cidade,
-            "id_estado" => $estado['id']
-          ]
-        ]);
       });
 
-      $router->post('/{uf}', function ($uf) {
-        $municipiosController = new MunicipiosController();
-        $municipiosController->findByUf($uf);
+      $router->post('/{uf}', static function ($uf): void {
+        (new MunicipiosController())->findByUf($uf);
       });
     });
 
     $router->run($callback);
+  }
+
+  private static function requestData(): array
+  {
+    try {
+      return JsonRequest::body();
+    } catch (\InvalidArgumentException $exception) {
+      JsonResponse::error($exception->getMessage(), 400);
+      exit;
+    }
+  }
+
+  private static function mountLookup(Router $router, string $path, string $controllerClass): void
+  {
+    $router->mount($path, static function () use ($router, $controllerClass): void {
+      $router->post('/', static function () use ($controllerClass): void {
+        (new $controllerClass())->find(self::requestData());
+      });
+    });
   }
 }

@@ -3,11 +3,10 @@
 namespace App\Controllers\Fiscal;
 
 use App\Controllers\UtilsController;
+use App\Http\JsonResponse;
 use App\Models\CompanyModel;
-use App\Models\Connection;
 use App\Models\EmissoesModel;
 use Divulgueregional\ApiNfse\NFSeNacional;
-use Dotenv\Dotenv;
 
 /**
  * Controller para emissão de NFS-e (Nota Fiscal de Serviços Eletrônica)
@@ -15,7 +14,7 @@ use Dotenv\Dotenv;
  * Utiliza a API Nacional do Sistema NFS-e para emissão de notas de serviço.
  * Aceita o mesmo body da emissão de NFe, mapeando os campos para o padrão NFS-e.
  */
-class NotaServicoController extends Connection
+class NotaServicoController
 {
     protected $company;
     protected $ambiente;
@@ -26,9 +25,6 @@ class NotaServicoController extends Connection
 
     public function __construct($data = null)
     {
-        $dotenv = Dotenv::createImmutable(dirname(__DIR__, 3));
-        $dotenv->load();
-
         if ($data) {
             $this->data = $data;
         }
@@ -49,7 +45,9 @@ class NotaServicoController extends Connection
         }
 
         $this->company = new CompanyModel($companies[0]['id']);
-        $this->ambiente = intval($this->company->getTpamb()) > 0 ? $this->company->getTpamb() : 2;
+        $this->ambiente = intval($this->company->getTpamb()) > 0
+            ? intval($this->company->getTpamb())
+            : 2;
 
         // Reutiliza série/número da NFe como base para NFS-e (sem campo dedicado no banco)
         $this->serie = $this->ambiente === 1
@@ -68,7 +66,15 @@ class NotaServicoController extends Connection
      */
     protected function getCertPath(): string
     {
-        return dirname(__DIR__, 3) . '/app/storage/certificados/' . $this->company->getCertificado();
+        $path = dirname(__DIR__, 3)
+            . '/app/storage/certificados/'
+            . basename((string) $this->company->getCertificado());
+
+        if (!is_file($path)) {
+            throw new \RuntimeException('Certificado da empresa não encontrado.');
+        }
+
+        return $path;
     }
 
     /**
@@ -77,15 +83,18 @@ class NotaServicoController extends Connection
     public function emitir(): void
     {
         if (empty($this->data) || !isset($this->data['cnpj'])) {
-            http_response_code(400);
-            echo json_encode(['error' => 'Payload inválido para emissão de NFS-e']);
+            JsonResponse::error('Payload inválido para emissão de NFS-e.', 400);
             return;
         }
 
         try {
             if ($this->bootstrapCompany($this->data['cnpj']) === false) {
-                http_response_code(404);
-                echo json_encode(['error' => 'Empresa não encontrada']);
+                JsonResponse::error('Empresa não encontrada.', 404);
+                return;
+            }
+
+            if (floatval($this->data['total'] ?? 0) <= 0) {
+                JsonResponse::error('O valor total do serviço precisa ser maior que zero.', 422);
                 return;
             }
 
@@ -100,18 +109,23 @@ class NotaServicoController extends Connection
             $cnpj = $this->company->getCnpj();
             $serie = intval($this->data['servico']['serie'] ?? $this->serie);
             $numero = intval($this->data['servico']['numero'] ?? $this->numero);
+            if ($serie < 1 || $numero < 1) {
+                JsonResponse::error('Série e número da NFS-e precisam ser maiores que zero.', 422);
+                return;
+            }
+            $this->serie = $serie;
+            $this->numero = $numero;
 
             $dados = $this->buildDados($municipio, $cnpj, $serie, $numero);
             $xmlBruto = $this->nfse->montarXmlDPS($dados);
             $xmlAssinado = $this->nfse->assinarXML($xmlBruto);
             $retorno = $this->nfse->enviarDPS($xmlAssinado);
 
-            if (isset($retorno['codigo']) && $retorno['codigo'] === 201) {
+            if (isset($retorno['codigo']) && (int) $retorno['codigo'] === 201) {
                 $this->atualizaNumero();
                 $this->salvaEmissao($retorno, $dados['idDps'], $serie, $numero);
 
-                http_response_code(200);
-                echo json_encode([
+                JsonResponse::send([
                     'chave' => $retorno['chaveAcesso'] ?? $dados['idDps'],
                     'protocolo' => $retorno['idDps'] ?? '',
                     'avisos' => $retorno['alertas'] ?? [],
@@ -119,16 +133,15 @@ class NotaServicoController extends Connection
                     'retorno' => $retorno
                 ]);
             } else {
-                http_response_code(403);
-                echo json_encode([
+                JsonResponse::send([
                     'error' => 'Erro ao emitir NFS-e',
                     'xml' => $xmlAssinado,
                     'retorno' => $retorno
-                ]);
+                ], 422);
             }
-        } catch (\Exception $e) {
-            http_response_code(500);
-            echo json_encode(['error' => $e->getMessage()]);
+        } catch (\Throwable $e) {
+            error_log($e->getMessage());
+            JsonResponse::error('Erro interno ao emitir NFS-e.', 500);
         }
     }
 
@@ -142,8 +155,6 @@ class NotaServicoController extends Connection
         $fiscal = $data['fiscal'] ?? [];
 
         $idDps = $this->gerarIdDPS($municipio, $cnpj, $serie, $numero);
-
-        // die($idDps);
 
         return [
             'idDps' => $idDps,
@@ -237,8 +248,11 @@ class NotaServicoController extends Connection
 
         switch ($crt) {
             case 1: // Simples Nacional
-            case 4: // MEI
                 $opSimpNac = 3; // Optante ME/EPP
+                $regApTribSN = 1;
+                break;
+            case 4: // MEI
+                $opSimpNac = 2;
                 $regApTribSN = 1;
                 break;
             case 2: // Simples com Excesso de Sublimite
@@ -290,11 +304,13 @@ class NotaServicoController extends Connection
     protected function atualizaNumero(): void
     {
         if ($this->ambiente === 1) {
-            $this->company->setNumero_nfe(intval($this->numero) + 1);
-            $this->company->update(['numero_nfe' => $this->company->getNumero_nfe()]);
+            $this->company->setNumero_nfse(intval($this->numero) + 1);
+            $this->company->update(['numero_nfse' => $this->company->getNumero_nfse()]);
         } else {
-            $this->company->setNumero_nfe_homologacao(intval($this->numero) + 1);
-            $this->company->update(['numero_nfe_homologacao' => $this->company->getNumero_nfe_homologacao()]);
+            $this->company->setNumero_nfse_homologacao(intval($this->numero) + 1);
+            $this->company->update([
+                'numero_nfse_homologacao' => $this->company->getNumero_nfse_homologacao()
+            ]);
         }
     }
 

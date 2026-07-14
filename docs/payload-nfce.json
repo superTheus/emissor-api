@@ -1,0 +1,32 @@
+{
+  "cnpj": "45730598000102",
+  "cfop": "5102",
+  "operacao": "VENDA DE MERCADORIA",
+  "modoEmissao": 1,
+  "troco": 0.00,
+  "produtos": [
+    {
+      "codigo": "NFCE-001",
+      "ean": "7894900010015",
+      "descricao": "Refrigerante Coca-Cola Original Lata 350 ml",
+      "ncm": "22021000",
+      "cfop": "5102",
+      "unidade": "UN",
+      "quantidade": 2.00,
+      "valor": 5.00,
+      "total": 10.00,
+      "desconto": 0.00,
+      "frete": 0.00,
+      "acrescimo": 0.00,
+      "origem": 0,
+      "pis_cst": "07",
+      "cofins_cst": "07"
+    }
+  ],
+  "pagamentos": [
+    {
+      "codigo": 1,
+      "valorpago": 10.00
+    }
+  ]
+}

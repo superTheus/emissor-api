@@ -2,10 +2,13 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\FindsByFilters;
 use stdClass;
 
 class CfopModel extends Connection
 {
+  use FindsByFilters;
+
   private $conn;
   private $id;
   private $descricao;
@@ -32,10 +35,13 @@ class CfopModel extends Connection
       $stmt->execute();
 
       $cest = $stmt->fetch(\PDO::FETCH_ASSOC);
+      if (!$cest) {
+        throw new \RuntimeException('CFOP não encontrado.');
+      }
       $this->setDescricao($cest['descricao']);
       $this->setAplicacao($cest['aplicacao']);
     } catch (\PDOException $e) {
-      echo $e->getMessage();
+      throw new \RuntimeException('Erro ao carregar o CFOP.', 0, $e);
     }
   }
 
@@ -50,38 +56,12 @@ class CfopModel extends Connection
 
   public function find($filter = [], $limit = null)
   {
-    $sql = "SELECT * FROM {$this->table}";
+    return $this->findByFilters($filter, $limit);
+  }
 
-    if (!empty($filter)) {
-      $sql .= " WHERE ";
-      $sql .= implode(" AND ", array_map(function ($column) {
-        return "$column = :$column";
-      }, array_keys($filter)));
-    }
-
-    if ($limit !== null) {
-      $sql .= " LIMIT :limit";
-    }
-
-    try {
-      $stmt = $this->conn->prepare($sql);
-
-      if (!empty($filter)) {
-        foreach ($filter as $column => $value) {
-          $stmt->bindValue(":$column", $value);
-        }
-      }
-
-      if ($limit !== null) {
-        $stmt->bindValue(':limit', (int) $limit, \PDO::PARAM_INT);
-      }
-
-      $stmt->execute();
-
-      return $stmt->fetchAll(\PDO::FETCH_ASSOC);
-    } catch (\PDOException $e) {
-      echo $e->getMessage();
-    }
+  protected function filterableColumns(): array
+  {
+    return ['id', 'descricao', 'aplicacao'];
   }
 
   /**

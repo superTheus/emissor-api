@@ -3,11 +3,13 @@
 namespace App\Models;
 
 use App\Controllers\UtilsController;
-use App\Models\Connection;
+use App\Models\Concerns\FindsByFilters;
 use stdClass;
 
 class EmissoesModel extends Connection
 {
+  use FindsByFilters;
+
   private $conn;
   private $chave;
   private $numero;
@@ -40,6 +42,9 @@ class EmissoesModel extends Connection
       $stmt->execute();
 
       $emissao = $stmt->fetch(\PDO::FETCH_ASSOC);
+      if (!$emissao) {
+        throw new \RuntimeException('Emissão não encontrada.');
+      }
       $this->setNumero($emissao['numero']);
       $this->setProtocolo($emissao['protocolo']);
       $this->setChave($emissao['chave']);
@@ -50,7 +55,7 @@ class EmissoesModel extends Connection
       $this->setTipo($emissao['tipo']);
       $this->setSequencia_cc($emissao['sequencia_cc']);
     } catch (\PDOException $e) {
-      echo $e->getMessage();
+      throw new \RuntimeException('Erro ao carregar a emissão.', 0, $e);
     }
   }
 
@@ -71,40 +76,17 @@ class EmissoesModel extends Connection
 
   public function find($filter = [], $limit = null)
   {
-    $sql = "SELECT * FROM {$this->table}";
-
-    if (!empty($filter)) {
-      $sql .= " WHERE ";
-      $sql .= implode(" AND ", array_map(function ($column) {
-        return "$column = :$column";
-      }, array_keys($filter)));
+    $filter = $filter ?? [];
+    if (is_array($filter) && isset($filter['empresa'])) {
+      $filter['empresa'] = UtilsController::soNumero($filter['empresa']);
     }
 
-    if ($limit !== null) {
-      $sql .= " LIMIT :limit";
-    }
+    return $this->findByFilters($filter, $limit);
+  }
 
-    try {
-      $stmt = $this->conn->prepare($sql);
-
-      foreach ($filter as $key => $value) {
-
-        if ($key == 'empresa') {
-          $value = UtilsController::soNumero($value);
-        }
-
-        $stmt->bindParam(":$key", $value);
-      }
-
-      if ($limit !== null) {
-        $stmt->bindParam(':limit', $limit, \PDO::PARAM_INT);
-      }
-
-      $stmt->execute();
-      return $stmt->fetchAll(\PDO::FETCH_ASSOC);
-    } catch (\PDOException $e) {
-      echo $e->getMessage();
-    }
+  protected function filterableColumns(): array
+  {
+    return ['chave', 'numero', 'serie', 'empresa', 'tipo', 'protocolo'];
   }
 
   public function create()
@@ -124,7 +106,7 @@ class EmissoesModel extends Connection
       $stmt->bindParam(':protocolo', $this->protocolo);
       $stmt->execute();
     } catch (\PDOException $e) {
-      echo $e->getMessage();
+      throw new \RuntimeException('Erro ao salvar a emissão.', 0, $e);
     }
   }
 
@@ -151,7 +133,7 @@ class EmissoesModel extends Connection
       $stmt->bindParam(':sequencia_cc', $this->sequencia_cc);
       $stmt->execute();
     } catch (\PDOException $e) {
-      echo $e->getMessage();
+      throw new \RuntimeException('Erro ao atualizar a emissão.', 0, $e);
     }
   }
 

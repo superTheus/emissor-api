@@ -2,11 +2,13 @@
 
 namespace App\Models;
 
-use App\Models\Connection;
+use App\Models\Concerns\FindsByFilters;
 use stdClass;
 
 class CompanyModel extends Connection
 {
+  use FindsByFilters;
+
   private $conn;
   private $id;
   private $cnpj;
@@ -24,6 +26,7 @@ class CompanyModel extends Connection
   private $inscricao_estadual;
   private $inscricao_municipal;
   private $atividade;
+  private $logo;
   private $certificado;
   private $senha;
   private $csc;
@@ -70,6 +73,9 @@ class CompanyModel extends Connection
       $stmt->execute();
 
       $company = $stmt->fetch(\PDO::FETCH_ASSOC);
+      if (!$company) {
+        throw new \RuntimeException('Empresa não encontrada.');
+      }
 
       $this->setCnpj($company['cnpj']);
       $this->setRazao_social($company['razao_social']);
@@ -86,6 +92,7 @@ class CompanyModel extends Connection
       $this->setInscricao_estadual($company['inscricao_estadual']);
       $this->setInscricao_municipal($company['inscricao_municipal']);
       $this->setAtividade($company['atividade']);
+      $this->setLogo($company['logo'] ?? null);
       $this->setCertificado($company['certificado']);
       $this->setSenha($company['senha']);
       $this->setCsc($company['csc']);
@@ -112,7 +119,7 @@ class CompanyModel extends Connection
       $this->setCodigo_municipio($company['codigo_municipio']);
       $this->setCrt($company['crt']);
     } catch (\PDOException $e) {
-      echo $e->getMessage();
+      throw new \RuntimeException('Erro ao carregar a empresa.', 0, $e);
     }
   }
 
@@ -135,6 +142,7 @@ class CompanyModel extends Connection
     $data->inscricao_estadual = $this->getInscricao_estadual();
     $data->inscricao_municipal = $this->getInscricao_municipal();
     $data->atividade = $this->getAtividade();
+    $data->logo = $this->getLogo();
     $data->certificado = $this->getCertificado();
     $data->senha = $this->getSenha();
     $data->csc = $this->getCsc();
@@ -164,52 +172,41 @@ class CompanyModel extends Connection
 
   public function find($filter = [], $limit = null)
   {
-    $sql = "SELECT * FROM {$this->table}";
+    return $this->findByFilters($filter, $limit);
+  }
 
-    if (!empty($filter)) {
-      $sql .= " WHERE ";
-      $sql .= implode(" AND ", array_map(function ($column) {
-        return "$column = :$column";
-      }, array_keys($filter)));
-    }
-
-    if ($limit !== null) {
-      $sql .= " LIMIT :limit";
-    }
-
-    try {
-      $stmt = $this->conn->prepare($sql);
-
-      if (!empty($filter)) {
-        foreach ($filter as $column => $value) {
-          $stmt->bindValue(":$column", $value);
-        }
-      }
-
-      if ($limit !== null) {
-        $stmt->bindValue(':limit', (int) $limit, \PDO::PARAM_INT);
-      }
-
-      $stmt->execute();
-
-      return $stmt->fetchAll(\PDO::FETCH_ASSOC);
-    } catch (\PDOException $e) {
-      echo $e->getMessage();
-    }
+  protected function filterableColumns(): array
+  {
+    return [
+      'id', 'cnpj', 'razao_social', 'nome_fantasia', 'email', 'cidade', 'uf',
+      'tpamb', 'codigo_municipio', 'codigo_uf', 'situacao_tributaria', 'crt',
+    ];
   }
 
   public function create($data)
   {
+    if (!is_array($data)) {
+      throw new \InvalidArgumentException('Os dados da empresa precisam ser um objeto.');
+    }
+
+    foreach (['cnpj', 'razao_social', 'certificado', 'senha'] as $requiredField) {
+      if (empty($data[$requiredField])) {
+        throw new \InvalidArgumentException("Campo obrigatório da empresa: {$requiredField}");
+      }
+    }
+
+    $data = array_merge($this->companyDefaults(), $data);
+
     $sql = "INSERT INTO {$this->table} (
       tpamb, cnpj, razao_social, nome_fantasia, telefone, email, cep, logradouro, numero,
-      bairro, cidade, uf, certificado, senha, csc, csc_id, serie_nfce, numero_nfce,
+      bairro, cidade, uf, cnae, inscricao_municipal, atividade, logo, certificado, senha, csc, csc_id, serie_nfce, numero_nfce,
       serie_nfe, numero_nfe, codigo_municipio, codigo_uf, situacao_tributaria, inscricao_estadual,
       csc_homologacao, csc_id_homologacao, serie_nfce_homologacao, numero_nfce_homologacao, serie_nfe_homologacao,
       numero_nfe_homologacao, crt, serie_nfse, numero_nfse, serie_nfse_homologacao, numero_nfse_homologacao
     )
     VALUES (
       :tpamb, :cnpj, :razao_social, :nome_fantasia, :telefone, :email, :cep, :logradouro, :numero,
-      :bairro, :cidade, :uf, :certificado, :senha, :csc, :csc_id, :serie_nfce, :numero_nfce,
+      :bairro, :cidade, :uf, :cnae, :inscricao_municipal, :atividade, :logo, :certificado, :senha, :csc, :csc_id, :serie_nfce, :numero_nfce,
       :serie_nfe, :numero_nfe, :codigo_municipio, :codigo_uf, :situacao_tributaria, :inscricao_estadual,
       :csc_homologacao, :csc_id_homologacao, :serie_nfce_homologacao, :numero_nfce_homologacao, :serie_nfe_homologacao,
       :numero_nfe_homologacao, :crt, :serie_nfse, :numero_nfse, :serie_nfse_homologacao, :numero_nfse_homologacao
@@ -231,6 +228,10 @@ class CompanyModel extends Connection
       $stmt->bindParam(':bairro', $data['bairro']);
       $stmt->bindParam(':cidade', $data['cidade']);
       $stmt->bindParam(':uf', $data['uf']);
+      $stmt->bindParam(':cnae', $data['cnae']);
+      $stmt->bindParam(':inscricao_municipal', $data['inscricao_municipal']);
+      $stmt->bindParam(':atividade', $data['atividade']);
+      $stmt->bindParam(':logo', $data['logo']);
       $stmt->bindParam(':certificado', $data['certificado']);
       $stmt->bindParam(':senha', $data['senha']);
       $stmt->bindParam(':csc', $data['csc']);
@@ -261,7 +262,7 @@ class CompanyModel extends Connection
       $this->getById();
       return $this->getCurrentCompany();
     } catch (\PDOException $e) {
-      echo $e->getMessage();
+      throw new \RuntimeException('Erro ao criar a empresa.', 0, $e);
     }
   }
 
@@ -283,6 +284,7 @@ class CompanyModel extends Connection
               inscricao_estadual = :inscricao_estadual,
               inscricao_municipal = :inscricao_municipal,
               atividade = :atividade,
+              logo = :logo,
               certificado = :certificado,
               senha = :senha,
               csc = :csc,
@@ -308,7 +310,15 @@ class CompanyModel extends Connection
             WHERE id = :id";
 
 
+    if (!is_array($data)) {
+      throw new \InvalidArgumentException('Os dados da empresa precisam ser um objeto.');
+    }
+
+    $allowedFields = $this->updatableFields();
     foreach ($data as $column => $value) {
+      if (!in_array($column, $allowedFields, true)) {
+        throw new \InvalidArgumentException("Campo de empresa não permitido: {$column}");
+      }
       $this->$column = $value;
     }
 
@@ -329,6 +339,7 @@ class CompanyModel extends Connection
       $stmt->bindParam(':inscricao_estadual', $this->inscricao_estadual);
       $stmt->bindParam(':inscricao_municipal', $this->inscricao_municipal);
       $stmt->bindParam(':atividade', $this->atividade);
+      $stmt->bindParam(':logo', $this->logo);
       $stmt->bindParam(':certificado', $this->certificado);
       $stmt->bindParam(':senha', $this->senha);
       $stmt->bindParam(':csc', $this->csc);
@@ -357,7 +368,7 @@ class CompanyModel extends Connection
       $this->getById();
       return $this->getCurrentCompany();
     } catch (\PDOException $e) {
-      echo $e->getMessage();
+      throw new \RuntimeException('Erro ao atualizar a empresa.', 0, $e);
     }
   }
 
@@ -370,13 +381,69 @@ class CompanyModel extends Connection
       $stmt->bindParam(':id', $this->id);
       $stmt->execute();
     } catch (\PDOException $e) {
-      echo $e->getMessage();
+      throw new \RuntimeException('Erro ao excluir a empresa.', 0, $e);
     }
+  }
+
+  private function companyDefaults(): array
+  {
+    return [
+      'tpamb' => 2,
+      'nome_fantasia' => '',
+      'telefone' => '',
+      'email' => '',
+      'cep' => '',
+      'logradouro' => '',
+      'numero' => 'SN',
+      'bairro' => '',
+      'cidade' => '',
+      'uf' => '',
+      'cnae' => '',
+      'inscricao_estadual' => '',
+      'inscricao_municipal' => '',
+      'atividade' => '',
+      'logo' => null,
+      'csc' => '',
+      'csc_id' => '',
+      'csc_homologacao' => '',
+      'csc_id_homologacao' => '',
+      'serie_nfce' => 1,
+      'numero_nfce' => 1,
+      'serie_nfe' => 1,
+      'numero_nfe' => 1,
+      'serie_nfse' => 1,
+      'numero_nfse' => 1,
+      'serie_nfce_homologacao' => 1,
+      'numero_nfce_homologacao' => 1,
+      'serie_nfe_homologacao' => 1,
+      'numero_nfe_homologacao' => 1,
+      'serie_nfse_homologacao' => 1,
+      'numero_nfse_homologacao' => 1,
+      'codigo_municipio' => '',
+      'codigo_uf' => '',
+      'situacao_tributaria' => '102',
+      'crt' => 1,
+    ];
+  }
+
+  private function updatableFields(): array
+  {
+    return [
+      'tpamb', 'razao_social', 'nome_fantasia', 'telefone', 'email', 'cep',
+      'logradouro', 'numero', 'bairro', 'cidade', 'uf', 'cnae',
+      'inscricao_estadual', 'inscricao_municipal', 'atividade', 'logo', 'certificado',
+      'senha', 'csc', 'csc_id', 'serie_nfce', 'numero_nfce', 'serie_nfe',
+      'numero_nfe', 'codigo_municipio', 'codigo_uf', 'situacao_tributaria',
+      'serie_nfce_homologacao', 'numero_nfce_homologacao',
+      'serie_nfe_homologacao', 'numero_nfe_homologacao',
+      'csc_homologacao', 'csc_id_homologacao', 'crt', 'serie_nfse',
+      'numero_nfse', 'serie_nfse_homologacao', 'numero_nfse_homologacao',
+    ];
   }
 
   public function getCertificate()
   {
-    $folderPath = "app/storage/certificados";
+    $folderPath = dirname(__DIR__, 2) . "/app/storage/certificados";
     $certificadoPath = $folderPath . "/" . $this->getCertificado();
 
     if (file_exists($certificadoPath)) {
@@ -395,55 +462,88 @@ class CompanyModel extends Connection
 
   public function uploadCertificado($certificado)
   {
-    $certificado = base64_decode($certificado);
+    $certificado = base64_decode($certificado, true);
+    if ($certificado === false) {
+      throw new \InvalidArgumentException('Certificado precisa ser uma string base64 válida.');
+    }
 
-    $folderPath = "app/storage/certificados";
+    $folderPath = dirname(__DIR__, 2) . "/app/storage/certificados";
     $fileName = "certificado_" . uniqid() . ".pfx";
 
     if (!file_exists($folderPath)) {
-      mkdir($folderPath, 0777, true);
+      if (!mkdir($folderPath, 0770, true) && !is_dir($folderPath)) {
+        throw new \RuntimeException('Não foi possível criar a pasta de certificados.');
+      }
     }
 
-    file_put_contents($folderPath . "/" . $fileName, $certificado);
+    if (file_put_contents($folderPath . "/" . $fileName, $certificado, LOCK_EX) === false) {
+      throw new \RuntimeException('Não foi possível salvar o certificado.');
+    }
 
     return $fileName;
+  }
+
+  public function removeCertificado(string $certificadoNome): void
+  {
+    $filePath = dirname(__DIR__, 2)
+      . '/app/storage/certificados/'
+      . basename($certificadoNome);
+    if (is_file($filePath) && !unlink($filePath)) {
+      error_log("Não foi possível remover o certificado {$filePath}");
+    }
   }
 
   public function validateCertificate($cnpj, $senha, $certificadoNome)
   {
     $cnpj = preg_replace('/\D/', '', $cnpj);
-    $folderPath = "app/storage/certificados";
+    $folderPath = dirname(__DIR__, 2) . "/app/storage/certificados";
     $certificadoPath = $folderPath . "/" . $certificadoNome;
 
     if (file_exists($certificadoPath)) {
       $certificado = file_get_contents($certificadoPath);
       $certs = \App\Controllers\UtilsController::openCertificate($certificado, $senha);
 
-      if ($certs) {
-        $data = openssl_x509_parse($certs['cert']);
-        $data = json_encode($data);
-        $data = json_decode($data);
-
-        list($nome, $documento) = explode(":", $data->subject->CN);
-
-        $dt_vencimento = date('Y-m-d', $data->validTo_time_t);
-        $dt_atual = date('Y-m-d');
-
-        if ($documento == $cnpj) {
-          if ($dt_atual <= $dt_vencimento) {
-            return false;
-          } else {
-            return "Certificado vencido";
-          }
-        } else {
-          return "CNPJ do certificado é diferente do CNPJ informado";
-        }
-      } else {
+      if (!$certs) {
         return "Senha incorreta ou certificado inválido";
       }
+
+      $certificateData = openssl_x509_parse($certs['cert']);
+      if ($certificateData === false) {
+        return 'Não foi possível interpretar o certificado';
+      }
+
+      $commonName = $certificateData['subject']['CN'] ?? '';
+      $parts = explode(':', $commonName);
+      $documento = preg_replace('/\D/', '', end($parts) ?: '');
+
+      if ($documento !== $cnpj) {
+        return "CNPJ do certificado é diferente do CNPJ informado";
+      }
+
+      $now = time();
+      $validFrom = (int) ($certificateData['validFrom_time_t'] ?? 0);
+      $validTo = (int) ($certificateData['validTo_time_t'] ?? 0);
+
+      if ($validFrom === 0 || $validTo === 0 || $now < $validFrom || $now > $validTo) {
+        return 'Certificado expirado ou ainda não válido';
+      }
+
+      return false;
     } else {
       return "Certificado não encontrado";
     }
+  }
+
+  public function getLogo()
+  {
+    return $this->logo;
+  }
+
+  public function setLogo($logo): self
+  {
+    $this->logo = $logo;
+
+    return $this;
   }
 
   /**

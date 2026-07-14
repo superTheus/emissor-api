@@ -2,80 +2,78 @@
 
 namespace App\Controllers;
 
+use App\Http\JsonResponse;
 use App\Models\EmissoesModel;
 
-class EmissoesController
+final class EmissoesController
 {
-  protected $emissoesModel;
-
-  public function __construct($id = null)
-  {
-    $this->emissoesModel = new EmissoesModel($id ? $id : null);
-  }
-
-  public function find($data)
+  public function find($data): void
   {
     try {
-      $companyModel = new EmissoesModel();
-      $filter = $data && isset($data['filter']) ? $data['filter'] : null;
-      $limit = $data && isset($data['limit']) ? $data['limit'] : null;
-      $results = $companyModel->find($filter, $limit);
+      $data = is_array($data) ? $data : [];
+      $hasEnvelope = array_key_exists('filter', $data) || array_key_exists('limit', $data);
+      $filter = $hasEnvelope ? ($data['filter'] ?? []) : $data;
+      $limit = $hasEnvelope ? ($data['limit'] ?? null) : null;
 
-      http_response_code(200);
-      echo json_encode($results);
-    } catch (\Exception $e) {
-      http_response_code(500); // Internal Server Error
-      echo json_encode(['error' => $e->getMessage()]);
+      $results = (new EmissoesModel())->find($filter, $limit);
+      JsonResponse::send($results);
+    } catch (\InvalidArgumentException $exception) {
+      JsonResponse::error($exception->getMessage(), 422);
+    } catch (\Throwable $exception) {
+      error_log($exception->getMessage());
+      JsonResponse::error('Erro interno ao consultar emissões.', 500);
     }
   }
 
-  function verifyCertificate($certificadoBase64, $senha)
+  public function verifyCertificate($certificadoBase64, $senha): void
   {
-    if (strpos($certificadoBase64, 'base64,') !== false) {
-      $certificadoBase64 = explode('base64,', $certificadoBase64, 2)[1];
-    }
-    $certificadoDecodificado = base64_decode($certificadoBase64);
+    try {
+      if (!is_string($certificadoBase64) || $certificadoBase64 === '' || !is_string($senha)) {
+        throw new \InvalidArgumentException('Certificado e senha são obrigatórios.');
+      }
 
-    if ($certificadoDecodificado === false) {
-      http_response_code(400);
-      echo json_encode(['error' => 'Falha ao decodificar o certificado base64.']);
-      return;
-    }
+      if (strpos($certificadoBase64, 'base64,') !== false) {
+        $certificadoBase64 = explode('base64,', $certificadoBase64, 2)[1];
+      }
 
-    $certs = UtilsController::openCertificate($certificadoDecodificado, $senha);
-    
-    if (!$certs) {
-      http_response_code(400);
-      echo json_encode([
-        'error' => 'Senha incorreta ou certificado inválido.',
-        'php_version' => PHP_VERSION,
-        'openssl_version' => OPENSSL_VERSION_TEXT
+      $certificateContent = base64_decode($certificadoBase64, true);
+      if ($certificateContent === false) {
+        throw new \InvalidArgumentException('Falha ao decodificar o certificado base64.');
+      }
+
+      $certificates = UtilsController::openCertificate($certificateContent, $senha);
+      if (!$certificates) {
+        throw new \InvalidArgumentException('Senha incorreta ou certificado inválido.');
+      }
+
+      $certificate = openssl_x509_parse($certificates['cert']);
+      if ($certificate === false) {
+        throw new \InvalidArgumentException('Não foi possível analisar o certificado.');
+      }
+
+      $now = time();
+      $validFrom = (int) ($certificate['validFrom_time_t'] ?? 0);
+      $validTo = (int) ($certificate['validTo_time_t'] ?? 0);
+      if ($validFrom === 0 || $validTo === 0 || $now < $validFrom || $now > $validTo) {
+        throw new \InvalidArgumentException('Certificado expirado ou ainda não válido.');
+      }
+
+      $commonName = $certificate['subject']['CN'] ?? '';
+      $parts = explode(':', $commonName);
+      $document = UtilsController::soNumero(end($parts) ?: '');
+      $company = count($parts) > 1 ? implode(':', array_slice($parts, 0, -1)) : $commonName;
+
+      JsonResponse::send([
+        'empresa' => $company,
+        'cnpj' => $document,
+        'valido_de' => date(DATE_ATOM, $validFrom),
+        'valido_ate' => date(DATE_ATOM, $validTo),
       ]);
-      return;
+    } catch (\InvalidArgumentException $exception) {
+      JsonResponse::error($exception->getMessage(), 422);
+    } catch (\Throwable $exception) {
+      error_log($exception->getMessage());
+      JsonResponse::error('Erro interno ao validar o certificado.', 500);
     }
-
-    $certificado = openssl_x509_parse($certs['cert']);
-    
-    if ($certificado === false) {
-      http_response_code(400);
-      echo json_encode(['error' => 'Não foi possível analisar o certificado.']);
-      return;
-    }
-    
-    $validadeInicio = $certificado['validFrom_time_t'];
-    $validadeFim = $certificado['validTo_time_t'];
-    $tempoAtual = time();  
-
-    if ($tempoAtual < $validadeInicio || $tempoAtual > $validadeFim) {
-      http_response_code(400);
-      echo json_encode(['error' => 'Certificado expirado ou ainda não é válido.']);
-      return;
-    }
-
-    http_response_code(200);
-    echo json_encode([
-      "empresa" => explode(':', $certificado['subject']['CN'])[0],
-      "cnpj" => explode(':', $certificado['subject']['CN'])[1]
-    ]);
   }
 }

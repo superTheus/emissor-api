@@ -2,10 +2,13 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\FindsByFilters;
 use stdClass;
 
 class SituacaoTributariaModel extends Connection
 {
+  use FindsByFilters;
+
   private $conn;
   private $id;
   private $codigo;
@@ -33,12 +36,15 @@ class SituacaoTributariaModel extends Connection
       $stmt->execute();
 
       $origem = $stmt->fetch(\PDO::FETCH_ASSOC);
+      if (!$origem) {
+        throw new \RuntimeException('Situação tributária não encontrada.');
+      }
       $this->setId($origem['id']);
       $this->setCodigo($origem['codigo']);
       $this->setDescricao($origem['descricao']);
       $this->setRegime($origem['regime']);
     } catch (\PDOException $e) {
-      echo $e->getMessage();
+      throw new \RuntimeException('Erro ao carregar a situação tributária.', 0, $e);
     }
   }
 
@@ -55,38 +61,12 @@ class SituacaoTributariaModel extends Connection
 
   public function find($filter = [], $limit = null)
   {
-    $sql = "SELECT * FROM {$this->table}";
+    return $this->findByFilters($filter, $limit);
+  }
 
-    if (!empty($filter)) {
-      $sql .= " WHERE ";
-      $sql .= implode(" AND ", array_map(function ($column) {
-        return "$column = :$column";
-      }, array_keys($filter)));
-    }
-
-    if ($limit !== null) {
-      $sql .= " LIMIT :limit";
-    }
-
-    try {
-      $stmt = $this->conn->prepare($sql);
-
-      if (!empty($filter)) {
-        foreach ($filter as $column => $value) {
-          $stmt->bindValue(":$column", $value);
-        }
-      }
-
-      if ($limit !== null) {
-        $stmt->bindValue(':limit', (int) $limit, \PDO::PARAM_INT);
-      }
-
-      $stmt->execute();
-
-      return $stmt->fetchAll(\PDO::FETCH_ASSOC);
-    } catch (\PDOException $e) {
-      echo $e->getMessage();
-    }
+  protected function filterableColumns(): array
+  {
+    return ['id', 'codigo', 'descricao', 'regime'];
   }
 
   /**

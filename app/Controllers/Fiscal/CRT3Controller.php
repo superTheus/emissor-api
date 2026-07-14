@@ -27,8 +27,9 @@ class CRT3Controller extends BaseFiscalController
     // Verificar se é combustível
     if (isset($produto['codigo_anp']) && !empty($produto['codigo_anp'])) {
       $this->nfe->tagcomb($this->addCombustivelTag($produto, $index));
-      $this->nfe->tagICMS($this->addICMSCombTag($produto, $index));
-      $this->baseTotalIcms += 1000.00;
+      $icmsCombustivel = $this->addICMSCombTag($produto, $index);
+      $this->nfe->tagICMS($icmsCombustivel);
+      $this->baseTotalIcms += floatval($icmsCombustivel->vBC ?? 0);
     } else {
       // ICMS do Regime Normal
       if (isset($produto['icms'])) {
@@ -101,6 +102,9 @@ class CRT3Controller extends BaseFiscalController
     }
 
     $this->valorIcms += $valorIcms;
+    $this->totalIcms += $valorIcms;
+    $this->totalImposto += $valorIcms;
+    $this->totalImpostoProduto += $valorIcms;
 
     return $std;
   }
@@ -136,6 +140,10 @@ class CRT3Controller extends BaseFiscalController
     $std->pIPI = number_format($percentual_ipi, 4, ".", "");
     $std->vIPI = number_format($valorIpi, 2, ".", "");
 
+    $this->totalIPI += $valorIpi;
+    $this->totalImposto += $valorIpi;
+    $this->totalImpostoProduto += $valorIpi;
+
     return $std;
   }
 
@@ -153,6 +161,10 @@ class CRT3Controller extends BaseFiscalController
     $std->vBC = number_format($this->baseCalculo, 2, ".", "");
     $std->pPIS = number_format($percentual_pis, 4, ".", "");
     $std->vPIS = number_format($valorPis, 2, ".", "");
+
+    $this->totalPIS += $valorPis;
+    $this->totalImposto += $valorPis;
+    $this->totalImpostoProduto += $valorPis;
 
     return $std;
   }
@@ -186,6 +198,10 @@ class CRT3Controller extends BaseFiscalController
     $std->vBC = number_format($this->baseCalculo, 2, ".", "");
     $std->pCOFINS = number_format($percentual_cofins, 4, ".", "");
     $std->vCOFINS = number_format($valorCofins, 2, ".", "");
+
+    $this->totalCOFINS += $valorCofins;
+    $this->totalImposto += $valorCofins;
+    $this->totalImpostoProduto += $valorCofins;
 
     return $std;
   }

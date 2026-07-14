@@ -2,12 +2,13 @@
 
 namespace App\Models;
 
-use App\Controllers\UtilsController;
-use App\Models\Connection;
+use App\Models\Concerns\FindsByFilters;
 use stdClass;
 
 class EmissoesEventosModel extends Connection
 {
+  use FindsByFilters;
+
   private $id;
   private $conn;
   private $chave;
@@ -29,14 +30,17 @@ class EmissoesEventosModel extends Connection
 
   private function getById()
   {
-    $sql = "SELECT * FROM {$this->table} WHERE id = :id";
+    $sql = "SELECT * FROM {$this->table} WHERE chave = :chave ORDER BY id DESC LIMIT 1";
 
     try {
       $stmt = $this->conn->prepare($sql);
-      $stmt->bindParam(':id', $this->id);
+      $stmt->bindParam(':chave', $this->chave);
       $stmt->execute();
 
       $emissao = $stmt->fetch(\PDO::FETCH_ASSOC);
+      if (!$emissao) {
+        throw new \RuntimeException('Evento fiscal não encontrado.');
+      }
       $this->setId($emissao['id']);
       $this->setProtocolo($emissao['protocolo']);
       $this->setChave($emissao['chave']);
@@ -44,7 +48,7 @@ class EmissoesEventosModel extends Connection
       $this->setLink($emissao['link']);
       $this->setTipo($emissao['tipo']);
     } catch (\PDOException $e) {
-      echo $e->getMessage();
+      throw new \RuntimeException('Erro ao carregar o evento fiscal.', 0, $e);
     }
   }
 
@@ -61,40 +65,12 @@ class EmissoesEventosModel extends Connection
 
   public function find($filter = [], $limit = null)
   {
-    $sql = "SELECT * FROM {$this->table}";
+    return $this->findByFilters($filter, $limit);
+  }
 
-    if (!empty($filter)) {
-      $sql .= " WHERE ";
-      $sql .= implode(" AND ", array_map(function ($column) {
-        return "$column = :$column";
-      }, array_keys($filter)));
-    }
-
-    if ($limit !== null) {
-      $sql .= " LIMIT :limit";
-    }
-
-    try {
-      $stmt = $this->conn->prepare($sql);
-
-      foreach ($filter as $key => $value) {
-
-        if ($key == 'empresa') {
-          $value = UtilsController::soNumero($value);
-        }
-
-        $stmt->bindParam(":$key", $value);
-      }
-
-      if ($limit !== null) {
-        $stmt->bindParam(':limit', $limit, \PDO::PARAM_INT);
-      }
-
-      $stmt->execute();
-      return $stmt->fetchAll(\PDO::FETCH_ASSOC);
-    } catch (\PDOException $e) {
-      echo $e->getMessage();
-    }
+  protected function filterableColumns(): array
+  {
+    return ['id', 'chave', 'tipo', 'protocolo'];
   }
 
   public function create()
@@ -111,7 +87,7 @@ class EmissoesEventosModel extends Connection
       $stmt->bindParam(':link', $this->link);
       $stmt->execute();
     } catch (\PDOException $e) {
-      echo $e->getMessage();
+      throw new \RuntimeException('Erro ao salvar o evento fiscal.', 0, $e);
     }
   }
 
@@ -134,7 +110,7 @@ class EmissoesEventosModel extends Connection
       $stmt->bindParam(':link', $this->link);
       $stmt->execute();
     } catch (\PDOException $e) {
-      echo $e->getMessage();
+      throw new \RuntimeException('Erro ao atualizar o evento fiscal.', 0, $e);
     }
   }
 

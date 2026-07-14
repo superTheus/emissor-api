@@ -28,8 +28,9 @@ class CRT2Controller extends BaseFiscalController
     // Verificar se é combustível
     if (isset($produto['codigo_anp']) && !empty($produto['codigo_anp'])) {
       $this->nfe->tagcomb($this->addCombustivelTag($produto, $index));
-      $this->nfe->tagICMS($this->addICMSCombTag($produto, $index));
-      $this->baseTotalIcms += 1000.00;
+      $icmsCombustivel = $this->addICMSCombTag($produto, $index);
+      $this->nfe->tagICMS($icmsCombustivel);
+      $this->baseTotalIcms += floatval($icmsCombustivel->vBC ?? 0);
     } else {
       // ICMS como regime normal (usa CST ao invés de CSOSN)
       if (isset($produto['icms'])) {
@@ -65,6 +66,9 @@ class CRT2Controller extends BaseFiscalController
     $std->vICMS = number_format($valorIcms, 2, ".", "");
 
     $this->valorIcms += $valorIcms;
+    $this->totalIcms += $valorIcms;
+    $this->totalImposto += $valorIcms;
+    $this->totalImpostoProduto += $valorIcms;
 
     return $std;
   }

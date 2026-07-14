@@ -2,12 +2,13 @@
 
 namespace App\Controllers;
 
+use App\Controllers\Fiscal\Concerns\HandlesSefazAuthorizationResponse;
+use App\Http\HttpException;
+use App\Http\JsonResponse;
 use App\Models\CompanyModel;
-use App\Models\Connection;
 use App\Models\EmissoesModel;
+use App\Models\EmissoesEventosModel;
 use App\Models\FormaPagamentoModel;
-use Dotenv\Dotenv;
-use NFePHP\Common\Certificate;
 use NFePHP\Common\Keys;
 use NFePHP\DA\NFe\Danfce;
 use NFePHP\NFe\Common\Standardize;
@@ -16,8 +17,10 @@ use NFePHP\NFe\Make;
 use NFePHP\NFe\Tools;
 use stdClass;
 
-class CupomFiscalController extends Connection
+class CupomFiscalController
 {
+  use HandlesSefazAuthorizationResponse;
+
   private $nfe;
   private $tools;
   private $currentXML;
@@ -46,13 +49,20 @@ class CupomFiscalController extends Connection
   private $response;
   private $warnings = [];
   private $mod = 65;
+  private $totalFrete = 0;
+  private $totalDesconto = 0;
+  private $totalOutrasDespesas = 0;
+  private $receiptPollAttempts = 0;
+  private $receiptNumber;
+  private const MAX_RECEIPT_POLLS = 5;
 
   public function __construct($data = null)
   {
-    $dotenv = Dotenv::createImmutable(dirname(__DIR__, 2));
-    $dotenv->load();
-
     if ($data) {
+      if (empty($data['cnpj'])) {
+        throw new HttpException('CNPJ da empresa não informado.', 422);
+      }
+
       $this->nfe = new Make();
       $this->data = $data;
 
@@ -63,16 +73,17 @@ class CupomFiscalController extends Connection
         ]);
 
         if (!$company) {
-          throw new \Exception("Empresa não encontrada");
+          throw new HttpException('Empresa não encontrada.', 404);
         }
 
         $this->company = new CompanyModel($company[0]['id']);
-        $this->ambiente = intval($this->company->getTpamb()) > 0 ? $this->company->getTpamb() : 1;
-        $this->serie = $this->company->getTpamb() === 1 ? $this->company->getSerie_nfce() : $this->company->getSerie_nfce_homologacao();
-        $this->numero = $this->company->getTpamb() === 1 ? $this->company->getNumero_nfce() : $this->company->getNumero_nfce_homologacao();
-        $this->csc = $this->company->getTpamb() === 1 ? $this->company->getCsc() : $this->company->getCsc_homologacao();
-        $this->csc_id = $this->company->getTpamb() === 1 ? $this->company->getCsc_id() : $this->company->getCsc_id_homologacao();
-        $this->certificado = UtilsController::getCertifcado($this->company->getCertificado());
+        $this->ambiente = max(1, intval($this->company->getTpamb()));
+        $isProduction = $this->ambiente === 1;
+        $this->serie = $isProduction ? $this->company->getSerie_nfce() : $this->company->getSerie_nfce_homologacao();
+        $this->numero = $isProduction ? $this->company->getNumero_nfce() : $this->company->getNumero_nfce_homologacao();
+        $this->csc = $isProduction ? $this->company->getCsc() : $this->company->getCsc_homologacao();
+        $this->csc_id = $isProduction ? $this->company->getCsc_id() : $this->company->getCsc_id_homologacao();
+        $this->certificado = UtilsController::getCertificado($this->company->getCertificado());
         $this->config = $this->setConfig();
         $this->dataEmissao = date('Y-m-d\TH:i:sP');
         $this->modo_emissao = isset($data['modoEmissao']) ? $data['modoEmissao'] : 1;
@@ -82,7 +93,17 @@ class CupomFiscalController extends Connection
         if (isset($data['pagamentos'])) {
           $this->pagamentos = array_map(
             function ($pagamento) {
-              $formaPagamentoModel = new FormaPagamentoModel($pagamento['codigo']);
+              if (!isset($pagamento['codigo'], $pagamento['valorpago'])) {
+                throw new \InvalidArgumentException('Pagamento exige código e valor pago.');
+              }
+              try {
+                $formaPagamentoModel = new FormaPagamentoModel($pagamento['codigo']);
+              } catch (\RuntimeException $exception) {
+                if ($exception->getMessage() === 'Forma de pagamento não encontrada.') {
+                  throw new \InvalidArgumentException($exception->getMessage());
+                }
+                throw $exception;
+              }
 
               return [
                 "indPag"    => $formaPagamentoModel->getCurrent()->cod_meio,
@@ -96,7 +117,10 @@ class CupomFiscalController extends Connection
           $this->pagamentos = [];
         }
 
-        $this->tools = new Tools(json_encode($this->config), Certificate::readPfx($this->certificado, $this->company->getSenha()));
+        $this->tools = new Tools(
+          json_encode($this->config),
+          UtilsController::readPfxForNFePHP($this->certificado, $this->company->getSenha())
+        );
         $this->tools->model($this->mod);
 
         $this->montaChave();
@@ -106,7 +130,10 @@ class CupomFiscalController extends Connection
 
   public function createNfe()
   {
+    $stage = 'montagem das tags';
+
     try {
+      $this->validateEmissionData();
       $std = new stdClass();
       $std->versao = '4.00';
       $this->nfe->taginfNFe($std);
@@ -145,10 +172,14 @@ class CupomFiscalController extends Connection
 
         if (isset($produto['codigo_anp']) && !empty($produto['codigo_anp'])) {
           $this->nfe->tagICMS($this->addICMSCombTag($produto, $index));
-        } else {
+        } elseif (in_array((int) $this->company->getCrt(), [1, 4], true)) {
           $this->nfe->tagICMSSN($this->generateIcmssnData($produto, $index + 1));
+        } else {
+          $this->nfe->tagICMS($this->generateICMSData($produto, $index + 1));
         }
 
+        $this->nfe->tagPIS($this->generatePisData($produto, $index + 1));
+        $this->nfe->tagCOFINS($this->generateCofinsData($produto, $index + 1));
         $this->nfe->tagimposto($this->generateImpostoData($produto, $index + 1));
 
         $this->totalIcms += number_format($this->valorIcms, 2, ".", "");
@@ -156,7 +187,7 @@ class CupomFiscalController extends Connection
 
       $this->nfe->tagICMSTot($this->generateIcmsTot());
       $this->nfe->taginfAdic($this->generateIcmsInfo());
-      $this->nfe->taginfRespTec($this->generateReponsavelTecnicp());
+      $this->nfe->taginfRespTec($this->generateResponsavelTecnico());
       $this->nfe->tagtransp($this->generateFreteData());
       $this->nfe->tagpag($this->generateFaturaData());
 
@@ -168,82 +199,227 @@ class CupomFiscalController extends Connection
         $this->nfe->tagdetPag($this->generatePagamentoData($pagamento));
       }
 
+      $stage = 'geração do XML';
       $this->currentXML = $this->nfe->getXML();
+
+      $xmlErrors = $this->nfeErrors();
+      if ($this->currentXML === '' || $xmlErrors !== []) {
+        throw new \InvalidArgumentException('O XML da NFC-e não pôde ser gerado com os dados informados.');
+      }
+
+      $stage = 'assinatura digital';
       $this->currentXML = $this->tools->signNFe($this->currentXML);
 
+      $stage = 'comunicação com a SEFAZ';
       $this->response = $this->tools->sefazEnviaLote([$this->currentXML], str_pad(1, 15, '0', STR_PAD_LEFT), 1);
 
+      $stage = 'leitura da resposta da SEFAZ';
       $stdCl = new Standardize();
       $std = $stdCl->toStd($this->response);
       $this->setCurrentData($std);
+
+      $stage = 'processamento da resposta da SEFAZ';
       $this->analisaRetorno($std);
-    } catch (\Exception $e) {
-      http_response_code(500);
-      echo json_encode([
-        'error' => $e->getMessage(),
-        "error_tags" => $this->nfe->getErrors(),
-        "xml" => $this->currentXML,
-        "csc" => $this->csc,
+    } catch (\Throwable $e) {
+      $this->logEmissionException($e, $stage);
+      $isPayloadError = $e instanceof \InvalidArgumentException
+        && in_array($stage, ['montagem das tags', 'geração do XML'], true);
+      $isSefazError = in_array($stage, [
+        'comunicação com a SEFAZ',
+        'leitura da resposta da SEFAZ',
+        'processamento da resposta da SEFAZ',
+      ], true);
+
+      $status = $isPayloadError ? 422 : ($isSefazError ? 502 : 500);
+      $message = $isPayloadError
+        ? 'Não foi possível montar a NFC-e com os dados informados.'
+        : ($isSefazError
+          ? 'Não foi possível concluir a comunicação com a SEFAZ.'
+          : 'Não foi possível emitir a NFC-e.');
+
+      JsonResponse::error($message, $status, [
+        'error_tags' => $this->emissionErrorTags($e, $stage),
+        'etapa' => $stage,
       ]);
+    }
+  }
+
+  private function nfeErrors(): array
+  {
+    if (!is_object($this->nfe) || !method_exists($this->nfe, 'getErrors')) {
+      return [];
+    }
+
+    return array_values(array_unique(array_filter(
+      array_map(static fn($error) => trim((string) $error), $this->nfe->getErrors()),
+      static fn($error) => $error !== ''
+    )));
+  }
+
+  private function emissionErrorTags(\Throwable $exception, string $stage): array
+  {
+    $errors = $this->nfeErrors();
+    $publicMessage = $this->publicEmissionExceptionMessage($exception, $stage);
+
+    if ($publicMessage !== '') {
+      $errors[] = $publicMessage;
+    }
+
+    if ($errors === []) {
+      $errors[] = "Falha na etapa: {$stage}.";
+    }
+
+    return array_values(array_unique($errors));
+  }
+
+  private function publicEmissionExceptionMessage(\Throwable $exception, string $stage): string
+  {
+    $message = trim(preg_replace('/\s+/', ' ', $exception->getMessage()) ?? '');
+
+    if (preg_match('/certificate unknown|unknown ca|alert bad certificate/i', $message)) {
+      return 'A SEFAZ recusou o certificado digital apresentado. Verifique a validade, a titularidade e a cadeia de certificação do PFX.';
+    }
+
+    if ($stage === 'assinatura digital') {
+      return 'Não foi possível assinar o XML. Verifique o arquivo, a senha e a validade do certificado digital da empresa.';
+    }
+
+    if (preg_match('/could not load PEM client certificate|bad end line/i', $message)) {
+      return 'O PFX foi lido, mas o certificado PEM temporário usado na conexão com a SEFAZ ficou malformado.';
+    }
+
+    if (preg_match('/certific|certificate|private key|openssl|pfx|pkcs/i', $message)) {
+      return 'Não foi possível usar o certificado digital da empresa. Verifique o arquivo, a senha e a validade.';
+    }
+
+    if (preg_match('/timed? out|timeout|could not resolve|connection refused|failed to connect|curl|soap|webservice/i', $message)) {
+      return 'Não foi possível conectar ao serviço da SEFAZ. Tente novamente e verifique a disponibilidade do autorizador.';
+    }
+
+    if (preg_match('/SQLSTATE|PDO|password|senha|secret|BEGIN [A-Z ]*PRIVATE KEY|Stack trace/i', $message)) {
+      return "Falha interna na etapa: {$stage}.";
+    }
+
+    if ($message !== '' && !str_contains($message, '<NFe') && mb_strlen($message) <= 500) {
+      return $message;
+    }
+
+    return "Falha na etapa: {$stage}.";
+  }
+
+  private function logEmissionException(\Throwable $exception, string $stage): void
+  {
+    error_log(sprintf(
+      '[NFC-e][%s] %s: %s em %s:%d',
+      $stage,
+      get_class($exception),
+      $exception->getMessage(),
+      $exception->getFile(),
+      $exception->getLine()
+    ));
+  }
+
+  private function validateEmissionData(): void
+  {
+    foreach (['cnpj', 'cfop', 'produtos', 'pagamentos'] as $field) {
+      if (empty($this->data[$field])) {
+        throw new \InvalidArgumentException("Campo obrigatório para NFC-e: {$field}");
+      }
+    }
+
+    foreach ($this->data['produtos'] as $index => $product) {
+      foreach (['codigo', 'ean', 'descricao', 'ncm', 'cfop', 'unidade', 'quantidade', 'valor', 'total', 'origem'] as $field) {
+        if (!array_key_exists($field, $product)) {
+          throw new \InvalidArgumentException("Campo obrigatório do produto {$index}: {$field}");
+        }
+      }
+    }
+
+    foreach ($this->data['pagamentos'] as $index => $payment) {
+      if (!isset($payment['codigo'], $payment['valorpago'])) {
+        throw new \InvalidArgumentException("Pagamento {$index} exige código e valor pago.");
+      }
     }
   }
 
   public function cancelNfce($data)
   {
     try {
+      foreach (['cnpj', 'chave', 'justificativa'] as $field) {
+        if (empty($data[$field])) {
+          throw new \InvalidArgumentException("Campo obrigatório: {$field}");
+        }
+      }
+      if (mb_strlen(trim($data['justificativa'])) < 15) {
+        throw new \InvalidArgumentException('Justificativa deve ter no mínimo 15 caracteres.');
+      }
+
       $companyModel = new CompanyModel();
       $company = $companyModel->find([
         "cnpj" => UtilsController::soNumero($data['cnpj'])
       ]);
 
       if (!$company) {
-        http_response_code(404);
-        echo json_encode([
-          "error" => "Empresa não encontrada"
-        ]);
+        JsonResponse::error('Empresa não encontrada.', 404);
         return;
       }
 
       $this->company = new CompanyModel($company[0]['id']);
-      $this->certificado = UtilsController::getCertifcado($this->company->getCertificado());
+      $this->certificado = UtilsController::getCertificado($this->company->getCertificado());
       $this->config = $this->setConfig();
 
       $emissoesModel = new EmissoesModel($data['chave']);
       $emissao = $emissoesModel->getCurrent();
+      if ($emissao->tipo !== 'NFCE') {
+        throw new \InvalidArgumentException('A chave informada não pertence a uma NFC-e.');
+      }
 
-      $this->tools = new Tools(json_encode($this->config), Certificate::readPfx($this->certificado, $this->company->getSenha()));
+      $this->tools = new Tools(
+        json_encode($this->config),
+        UtilsController::readPfxForNFePHP($this->certificado, $this->company->getSenha())
+      );
       $this->tools->model($this->mod);
 
       $response = $this->tools->sefazCancela($emissao->chave, $data['justificativa'], $emissao->protocolo);
       $stdCl = new Standardize();
       $std = $stdCl->toStd($response);
 
-      if ($std->cStat == 128) {
-        http_response_code(200);
-        echo json_encode([
+      if (in_array((int) $std->cStat, [128, 135], true)) {
+        $xmlProtocolado = Complements::toAuthorize($this->tools->lastRequest, $response);
+        $eventProtocol = $std->retEvento->infEvento->nProt ?? '';
+
+        $event = new EmissoesEventosModel();
+        $event->setChave($emissao->chave);
+        $event->setTipo('CANCELAMENTO');
+        $event->setProtocolo($eventProtocol);
+        $event->setXml($xmlProtocolado);
+        $event->setLink('');
+        $event->create();
+
+        JsonResponse::send([
           "status" => "success",
-          "message" => "Cancelamento homologado com sucesso!"
-        ]);
-      } else if ($std->cStat == 135) {
-        http_response_code(200);
-        echo json_encode([
-          "status" => "success",
-          "message" => "Cancelamento homologado com sucesso!"
+          "message" => "Cancelamento homologado com sucesso!",
+          "protocolo" => $eventProtocol,
+          "xml" => $xmlProtocolado,
         ]);
       } else {
-        http_response_code(403);
-        echo json_encode([
+        JsonResponse::send([
           "status" => "error",
           "message" => "Erro ao cancelar: " . $std->xMotivo
-        ]);
+        ], 422);
       }
-    } catch (\Exception $e) {
-      http_response_code(500);
-      echo json_encode([
-        'error' => $e->getMessage(),
-        "xml" => $this->currentXML,
-        "csc" => $this->csc,
-      ]);
+    } catch (\InvalidArgumentException $e) {
+      JsonResponse::error($e->getMessage(), 422);
+    } catch (\RuntimeException $e) {
+      if ($e->getMessage() === 'Emissão não encontrada.') {
+        JsonResponse::error($e->getMessage(), 404);
+        return;
+      }
+      error_log($e->getMessage());
+      JsonResponse::error('Erro interno ao cancelar a NFC-e.', 500);
+    } catch (\Throwable $e) {
+      error_log($e->getMessage());
+      JsonResponse::error('Erro interno ao cancelar a NFC-e.', 500);
     }
   }
 
@@ -257,7 +433,6 @@ class CupomFiscalController extends Connection
       "cnpj"        => $this->company->getCnpj(),
       "schemes"     => "PL_009_V4",
       "versao"      => '4.00',
-      "tokenIBPT"   => "AAAAAAA",
       "CSC"         => $this->csc,
       "CSCid"       => $this->csc_id,
       "proxyConf"   => [
@@ -399,14 +574,17 @@ class CupomFiscalController extends Connection
 
     if (isset($produto['frete']) && $produto['frete'] > 0) {
       $std->vFrete = number_format($produto['frete'], 2, ".", "");
+      $this->totalFrete += floatval($produto['frete']);
     }
 
     if (isset($produto['desconto']) && $produto['desconto'] > 0) {
       $std->vDesc = number_format($produto['desconto'], 2, ".", "");
+      $this->totalDesconto += floatval($produto['desconto']);
     }
 
     if (isset($produto['acrescimo']) && $produto['acrescimo'] > 0) {
       $std->vOutro = number_format($produto['acrescimo'], 2, ".", "");
+      $this->totalOutrasDespesas += floatval($produto['acrescimo']);
     }
 
     $this->total_produtos += floatval($produto['total']);
@@ -420,9 +598,9 @@ class CupomFiscalController extends Connection
     $std->item = $item + 1;
     $std->cProdANP = $produto['codigo_anp'];
     $std->descANP = $produto['descricao_anp'];
-    $std->pGLP = $produto['gpl_percentual'];
-    $std->pGNn = $produto['gas_percentual_nacional'];
-    $std->vPart = $produto['valor_partida'];
+    $std->pGLP = $produto['gpl_percentual'] ?? 0;
+    $std->pGNn = $produto['gas_percentual_nacional'] ?? 0;
+    $std->vPart = $produto['valor_partida'] ?? 0;
     $std->UFCons = $this->company->getUf();
 
     return $std;
@@ -430,29 +608,29 @@ class CupomFiscalController extends Connection
 
   private function addICMSCombTag($produto, $item)
   {
+    $icms = $produto['icms_combustivel'] ?? null;
+    if (!is_array($icms) || empty($icms['CST'])) {
+      throw new \InvalidArgumentException(
+        "Produto de combustível {$item} exige o bloco icms_combustivel com CST e valores fiscais."
+      );
+    }
+
     $std = new \stdClass();
     $std->item = $item + 1;
-    $std->orig = '0';
-    $std->CST = '61';
-    $std->modBC = '3';
-    $std->vBC = '1000.00';
-    $std->vBCICMS = '1000.00';
-    $std->pICMS = '18.00';
-    $std->vICMS = '180.00';
-    $std->vBCICMSST = '1200.00';
-    $std->pICMSST = '18.00';
-    $std->vICMSST = '216.00';
-    $std->vBCFCP = '1000.00';
-    $std->pFCP = '2.00';
-    $std->vFCP = '20.00';
-    $std->vBCFCPST = '1200.00';
-    $std->pFCPST = '2.00';
-    $std->vFCPST = '24.00';
-    $std->adRemICMS = '0.50';
-    $std->vICMSMono = '50.00';
-    $std->adRemICMSRet = '0.30';
-    $std->vICMSMonoRet = '30.00';
-    $std->qBCMonoRet = $produto['quantidade'];
+    $std->orig = (string) ($icms['orig'] ?? $produto['origem'] ?? 0);
+    $std->CST = (string) $icms['CST'];
+
+    foreach ([
+      'modBC', 'vBC', 'vBCICMS', 'pICMS', 'vICMS', 'vBCICMSST', 'pICMSST',
+      'vICMSST', 'vBCFCP', 'pFCP', 'vFCP', 'vBCFCPST', 'pFCPST', 'vFCPST',
+      'qBCMono', 'adRemICMS', 'vICMSMono', 'qBCMonoRet', 'adRemICMSRet',
+      'vICMSMonoRet', 'qBCMonoDif', 'adRemICMSDif', 'vICMSMonoDif',
+    ] as $field) {
+      if (array_key_exists($field, $icms)) {
+        $std->{$field} = $icms[$field];
+      }
+    }
+
     return $std;
   }
 
@@ -469,23 +647,54 @@ class CupomFiscalController extends Connection
   {
     $std = new \stdClass();
     $std->item = $item;
-
-
     $std->vTotTrib = number_format(0.00, 2, ".", "");
 
-    $std->PIS = new \stdClass();
-    $std->PIS->PISAliq = new \stdClass();
-    $std->PIS->PISAliq->CST = isset($produto['pis_cst']) ? $produto['pis_cst'] : '07'; // exemplo: 07 = isento
-    $std->PIS->PISAliq->vBC = number_format(0.00, 2, ".", "");
-    $std->PIS->PISAliq->pPIS = number_format(0.00, 2, ".", "");
-    $std->PIS->PISAliq->vPIS = number_format(0.00, 2, ".", "");
+    return $std;
+  }
 
-    $std->COFINS = new \stdClass();
-    $std->COFINS->COFINSAliq = new \stdClass();
-    $std->COFINS->COFINSAliq->CST = isset($produto['cofins_cst']) ? $produto['cofins_cst'] : '07';
-    $std->COFINS->COFINSAliq->vBC = number_format(0.00, 2, ".", "");
-    $std->COFINS->COFINSAliq->pCOFINS = number_format(0.00, 2, ".", "");
-    $std->COFINS->COFINSAliq->vCOFINS = number_format(0.00, 2, ".", "");
+  private function generateICMSData($produto, $item)
+  {
+    $icms = $produto['icms'] ?? [];
+    $std = new stdClass();
+    $std->item = $item;
+    $std->orig = $produto['origem'] ?? 0;
+    $std->CST = (string) ($icms['cst'] ?? $produto['cst_icms'] ?? '40');
+
+    if (isset($icms['aliquota_icms'])) {
+      $rate = floatval($icms['aliquota_icms']);
+      $value = $this->baseCalculo * ($rate / 100);
+      $std->modBC = $icms['mod_bc'] ?? 0;
+      $std->vBC = number_format($this->baseCalculo, 2, '.', '');
+      $std->pICMS = number_format($rate, 4, '.', '');
+      $std->vICMS = number_format($value, 2, '.', '');
+      $this->valorIcms += $value;
+    }
+
+    return $std;
+  }
+
+  private function generatePisData($produto, $item)
+  {
+    $rate = floatval($produto['aliquota_pis'] ?? 0);
+    $std = new stdClass();
+    $std->item = $item;
+    $std->CST = (string) ($produto['pis_cst'] ?? $produto['cst_pis'] ?? '07');
+    $std->vBC = number_format($this->baseCalculo, 2, '.', '');
+    $std->pPIS = number_format($rate, 4, '.', '');
+    $std->vPIS = number_format($this->baseCalculo * ($rate / 100), 2, '.', '');
+
+    return $std;
+  }
+
+  private function generateCofinsData($produto, $item)
+  {
+    $rate = floatval($produto['aliquota_cofins'] ?? 0);
+    $std = new stdClass();
+    $std->item = $item;
+    $std->CST = (string) ($produto['cofins_cst'] ?? $produto['cst_cofins'] ?? '07');
+    $std->vBC = number_format($this->baseCalculo, 2, '.', '');
+    $std->pCOFINS = number_format($rate, 4, '.', '');
+    $std->vCOFINS = number_format($this->baseCalculo * ($rate / 100), 2, '.', '');
 
     return $std;
   }
@@ -623,7 +832,21 @@ class CupomFiscalController extends Connection
     $std->vFCPST     = 0000.00;
     $std->vFCPSTRet  = 0000.00;
     $std->vProd = $this->total_produtos;
-    $std->vNF = $this->total_produtos;
+    $std->vFrete = number_format($this->totalFrete, 2, '.', '');
+    $std->vSeg = 0.00;
+    $std->vDesc = number_format($this->totalDesconto, 2, '.', '');
+    $std->vII = 0.00;
+    $std->vIPI = 0.00;
+    $std->vIPIDevol = 0.00;
+    $std->vPIS = 0.00;
+    $std->vCOFINS = 0.00;
+    $std->vOutro = number_format($this->totalOutrasDespesas, 2, '.', '');
+    $std->vNF = number_format(
+      $this->total_produtos - $this->totalDesconto + $this->totalFrete + $this->totalOutrasDespesas,
+      2,
+      '.',
+      ''
+    );
     $std->vTotTrib = 0;
 
     return $std;
@@ -658,11 +881,10 @@ class CupomFiscalController extends Connection
   {
     $std            = new stdClass();
     $std->indPag    = isset($pagamento['indPag']) ? $pagamento['indPag'] : 0;
-    $std->tPag      = STR_PAD($pagamento['tPag'], 2, '0', STR_PAD_LEFT);
+    $std->tPag      = str_pad($pagamento['tPag'], 2, '0', STR_PAD_LEFT);
     $std->vPag      = number_format($pagamento['valorpago'], 2, ".", "");
 
     if (in_array($std->tPag, ['03', '04', '17', '3', '4', '17', 3, 4, 17])) {
-      $std->tpIntegra = 2;
       $std->tpIntegra   = 2;
       $std->CNPJPag        = "00000000000191";
       $std->tBand       = "99";
@@ -672,16 +894,9 @@ class CupomFiscalController extends Connection
     return $std;
   }
 
-  public function generateReponsavelTecnicp()
+  public function generateResponsavelTecnico()
   {
-    $std = new stdClass();
-    $std->CNPJ      = "45730598000102";
-    $std->xContato  = "Logic Tecnologia e Inovação";
-    $std->email     = "contato.logictec@gmail.com";
-    $std->fone      = "92991225648";
-    $std->idCSRT    = "01";
-
-    return $std;
+    return UtilsController::technicalResponsible();
   }
 
   private function montaChave()
@@ -701,7 +916,7 @@ class CupomFiscalController extends Connection
 
   private function atualizaNumero()
   {
-    if ($this->ambiente === 1) {
+    if ((int) $this->ambiente === 1) {
       $this->company->setNumero_nfce(intval($this->numero) + 1);
       $this->company->update([
         "numero_nfce" => $this->company->getNumero_nfce()
@@ -714,79 +929,7 @@ class CupomFiscalController extends Connection
     }
   }
 
-  private function conexaoSefaz()
-  {
-    try {
-      $resp_status = $this->tools->sefazStatus(strtoupper($this->company->getUf()), $this->ambiente);
-      $stdCl = new Standardize($resp_status);
-
-      $cStatus = $stdCl->toStd()->cStat;
-      if ($cStatus === '107') {
-        return true;
-      }
-
-      return false;
-    } catch (\Exception $e) {
-      return false;
-    }
-  }
-
-  private function analisaRetorno($std)
-  {
-    try {
-      if (isset($std->cStat)) {
-        $this->setStatus($std->cStat);
-        switch ($std->cStat) {
-          case 100:
-            $this->processarEmissao($std);
-            break;
-          case 103:
-            $this->processarLote($this->getCurrentData());
-            break;
-          case 104:
-            $this->loteProcessado($std);
-            break;
-          case 105:
-            $this->processarLote($this->getCurrentData());
-            break;
-          default:
-            http_response_code(403);
-            echo json_encode([
-              "error" => $std->xMotivo,
-              "xml" => $this->currentXML,
-              "csc" => $this->csc,
-            ]);
-            break;
-        }
-      }
-    } catch (\Exception $e) {
-      http_response_code(500);
-      echo json_encode([
-        'error' => $e->getMessage(),
-        "xml" => $this->currentXML
-      ]);
-    }
-  }
-
-  private function processarLote($std)
-  {
-    $recibo = $std->infRec->nRec;
-    $response = $this->tools->sefazConsultaRecibo($recibo);
-
-    $stdCl = new Standardize();
-    $std = $stdCl->toStd($response);
-
-    $this->analisaRetorno($std);
-  }
-
-  private function loteProcessado($std)
-  {
-    foreach ($std->protNFe as $prot) {
-      $this->analisaRetorno($prot);
-    }
-  }
-
-  private function processarEmissao($std)
+  protected function processarEmissao($std)
   {
     if (isset($std->protNFe)) {
       $this->currentChave = $std->protNFe->infProt->chNFe;
@@ -804,7 +947,6 @@ class CupomFiscalController extends Connection
     $this->currentXML = Complements::toAuthorize($this->currentXML, $this->response);
 
     $danfe = new Danfce($this->currentXML);
-    $danfe->debugMode(true);
     $danfe->setPaperWidth(80);
     $danfe->setMargins(2);
     $danfe->setDefaultFont('arial');
@@ -817,12 +959,11 @@ class CupomFiscalController extends Connection
     $this->atualizaNumero();
     $this->salvaEmissao();
 
-    http_response_code(200);
-    echo json_encode([
+    JsonResponse::send([
       "chave" => $this->currentChave,
       "avisos" => $this->warnings,
       "protocolo" => $this->numeroProtocolo,
-      "link" => $_ENV['URL_BASE'] . $link,
+      "link" => UtilsController::publicUrl($link),
       "xml" => $this->currentXML,
       "pdf" => base64_encode($this->currentPDF)
     ]);

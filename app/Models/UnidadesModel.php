@@ -2,11 +2,13 @@
 
 namespace App\Models;
 
-use App\Models\Connection;
+use App\Models\Concerns\FindsByFilters;
 use stdClass;
 
 class UnidadesModel extends Connection
 {
+  use FindsByFilters;
+
   private $conn;
   private $id;
   private $nome;
@@ -31,12 +33,15 @@ class UnidadesModel extends Connection
       $stmt->bindValue(':id', $this->getId());
       $stmt->execute();
       $result = $stmt->fetch(\PDO::FETCH_ASSOC);
+      if (!$result) {
+        throw new \RuntimeException('Unidade não encontrada.');
+      }
 
       $this->setId($result['id']);
       $this->setNome($result['nome']);
       $this->setSigla($result['sigla']);
-    } catch (\Exception $e) {
-      throw new \Exception($e->getMessage());
+    } catch (\PDOException $e) {
+      throw new \RuntimeException('Erro ao carregar a unidade.', 0, $e);
     }
   }
 
@@ -49,20 +54,14 @@ class UnidadesModel extends Connection
     return $data;
   }
 
-  public function find($filters = [])
+  public function find($filters = [], $limit = null)
   {
-    $sql = "SELECT * FROM {$this->table}";
+    return $this->findByFilters($filters, $limit);
+  }
 
-    if (!empty($filters)) {
-      $sql .= " WHERE ";
-      $sql .= implode(" AND ", array_map(function ($key, $value) {
-        return "{$key} = '{$value}'";
-      }, array_keys($filters), $filters));
-    }
-
-    $stmt = $this->conn->prepare($sql);
-    $stmt->execute();
-    return $stmt->fetchAll(\PDO::FETCH_ASSOC);
+  protected function filterableColumns(): array
+  {
+    return ['id', 'nome', 'sigla'];
   }
 
   /**

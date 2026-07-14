@@ -3,13 +3,13 @@
 namespace App\Controllers\Fiscal;
 
 use App\Controllers\UtilsController;
+use App\Controllers\Fiscal\Concerns\HandlesSefazAuthorizationResponse;
+use App\Http\HttpException;
+use App\Http\JsonResponse;
 use App\Models\CompanyModel;
-use App\Models\Connection;
 use App\Models\EmissoesEventosModel;
 use App\Models\EmissoesModel;
 use App\Models\FormaPagamentoModel;
-use Dotenv\Dotenv;
-use NFePHP\Common\Certificate;
 use NFePHP\Common\Keys;
 use NFePHP\DA\NFe\Daevento;
 use NFePHP\DA\NFe\Danfe;
@@ -19,8 +19,10 @@ use NFePHP\NFe\Make;
 use NFePHP\NFe\Tools;
 use stdClass;
 
-abstract class BaseFiscalController extends Connection
+abstract class BaseFiscalController
 {
+  use HandlesSefazAuthorizationResponse;
+
   protected $nfe;
   protected $tools;
   protected $currentXML;
@@ -60,33 +62,47 @@ abstract class BaseFiscalController extends Connection
   protected $totalIBSUF = 0.00;
   protected $totalIBSMun = 0.00;
   protected $totalCBS = 0.00;
-  protected $totalCbs = 0.00;
   protected $baseIBS = 0.00;
   protected $totalPIS = 0.00;
   protected $totalCOFINS = 0.00;
+  protected $totalIPI = 0.00;
   protected $totalImposto = 0.00;
   protected $totalImpostoProduto = 0.00;
   protected $totalFrete = 0.00;
   protected $modalidadeFrete = 9;
   protected $totalOutrasDespesas = 0;
+  protected $totalDesconto = 0;
+  protected $receiptPollAttempts = 0;
+  protected $receiptNumber;
+  protected const MAX_RECEIPT_POLLS = 5;
 
   public function __construct($data = null)
   {
-    $dotenv = Dotenv::createImmutable(dirname(__DIR__, 3));
-    $dotenv->load();
+    if ($data) {
+      $this->data = $data;
 
-    try {
-      if ($data) {
-        $this->data = $data;
-
-        if (isset($data['cliente']) && isset($data['produtos']) && isset($data['cnpj'])) {
-          $this->initializeFromData($data);
-        }
+      try {
+        $this->validateEmissionData($data);
+        $this->initializeFromData($data);
+      } catch (HttpException $exception) {
+        throw $exception;
+      } catch (\InvalidArgumentException $exception) {
+        throw new HttpException(
+          'Dados inválidos para emissão da NF-e.',
+          422,
+          ['error_tags' => [$exception->getMessage()], 'etapa' => 'validação']
+        );
+      } catch (\Throwable $exception) {
+        $this->logEmissionException($exception, 'inicialização');
+        throw new HttpException(
+          'Não foi possível preparar a emissão da NF-e.',
+          500,
+          [
+            'error_tags' => $this->emissionErrorTags($exception, 'inicialização'),
+            'etapa' => 'inicialização',
+          ]
+        );
       }
-    } catch (\Exception $e) {
-      http_response_code(500);
-      echo json_encode(['error' => $e->getMessage()]);
-      exit;
     }
   }
 
@@ -106,12 +122,13 @@ abstract class BaseFiscalController extends Connection
     }
 
     $this->company = new CompanyModel($company[0]['id']);
-    $this->ambiente = intval($this->company->getTpamb()) > 0 ? $this->company->getTpamb() : 1;
-    $this->serie = $this->company->getTpamb() === 1 ? $this->company->getSerie_nfe() : $this->company->getSerie_nfe_homologacao();
-    $this->numero = $this->company->getTpamb() === 1 ? $this->company->getNumero_nfe() : $this->company->getNumero_nfe_homologacao();
-    $this->csc = $this->company->getTpamb() === 1 ? $this->company->getCsc() : $this->company->getCsc_homologacao();
-    $this->csc_id = $this->company->getTpamb() === 1 ? $this->company->getCsc_id() : $this->company->getCsc_id_homologacao();
-    $this->certificado = UtilsController::getCertifcado($this->company->getCertificado());
+    $this->ambiente = max(1, (int) $this->company->getTpamb());
+    $isProduction = $this->ambiente === 1;
+    $this->serie = $isProduction ? $this->company->getSerie_nfe() : $this->company->getSerie_nfe_homologacao();
+    $this->numero = $isProduction ? $this->company->getNumero_nfe() : $this->company->getNumero_nfe_homologacao();
+    $this->csc = $isProduction ? $this->company->getCsc() : $this->company->getCsc_homologacao();
+    $this->csc_id = $isProduction ? $this->company->getCsc_id() : $this->company->getCsc_id_homologacao();
+    $this->certificado = UtilsController::getCertificado($this->company->getCertificado());
     $this->config = $this->setConfig();
 
     // Para emissão, dataEmissao é relevante; para cancelamento/CCe, não atrapalha.
@@ -120,7 +137,10 @@ abstract class BaseFiscalController extends Connection
       $this->dataEmissao = (new \DateTime('now'))->format('Y-m-d\TH:i:sP');
     }
 
-    $this->tools = new Tools(json_encode($this->config), Certificate::readPfx($this->certificado, $this->company->getSenha()));
+    $this->tools = new Tools(
+      json_encode($this->config),
+      UtilsController::readPfxForNFePHP($this->certificado, $this->company->getSenha())
+    );
     $this->tools->model($this->mod);
 
     return true;
@@ -131,6 +151,7 @@ abstract class BaseFiscalController extends Connection
    */
   protected function initializeFromData($data)
   {
+    $data['cliente']['tipo_documento'] = strtoupper(trim((string) $data['cliente']['tipo_documento']));
     $this->tipoCliente = $data['cliente']['tipo_documento'] === 'CPF' ? 'PF' : 'PJ';
 
     if ($this->tipoCliente === 'PF') {
@@ -151,8 +172,10 @@ abstract class BaseFiscalController extends Connection
     }
 
     if ($this->bootstrapCompanyAndToolsByCnpj($data['cnpj']) === false) {
-      throw new \Exception('Empresa não encontrada');
+      throw new HttpException('Empresa não encontrada.', 404);
     }
+
+    $this->validateEmissionContext($data);
 
     $this->modo_emissao = isset($data['modoEmissao']) ? $data['modoEmissao'] : 1;
     $this->produtos = isset($data['produtos']) ? $data['produtos'] : [];
@@ -176,7 +199,17 @@ abstract class BaseFiscalController extends Connection
     if (isset($data['pagamentos'])) {
       $this->pagamentos = array_map(
         function ($pagamento) {
-          $formaPagamentoModel = new FormaPagamentoModel($pagamento['codigo']);
+          if (!isset($pagamento['codigo'], $pagamento['valorpago'])) {
+            throw new \InvalidArgumentException('Pagamento exige código e valor pago.');
+          }
+          try {
+            $formaPagamentoModel = new FormaPagamentoModel($pagamento['codigo']);
+          } catch (\RuntimeException $exception) {
+            if ($exception->getMessage() === 'Forma de pagamento não encontrada.') {
+              throw new \InvalidArgumentException($exception->getMessage());
+            }
+            throw $exception;
+          }
 
           return [
             "indPag"    => $formaPagamentoModel->getCurrent()->cod_meio,
@@ -191,11 +224,255 @@ abstract class BaseFiscalController extends Connection
     }
 
     if ($this->conexaoSefaz() === false) {
-      $this->modo_emissao = 9;
-      array_push($this->warnings, "Não foi possível se conectar com a SEFAZ, a nota será emitida em modo de contingência");
+      // tpEmis=9 é contingência offline exclusiva da NFC-e (modelo 65).
+      // Para NF-e modelo 55, mantemos o modo solicitado.
+      array_push(
+        $this->warnings,
+        'A consulta de status da SEFAZ falhou; a autorização será tentada no modo de emissão informado.'
+      );
     }
 
     $this->montaChave();
+  }
+
+  protected function validateEmissionData(array $data): void
+  {
+    $errors = [];
+
+    foreach (['cnpj', 'cfop', 'cliente', 'produtos', 'total', 'pagamentos'] as $field) {
+      if (!array_key_exists($field, $data) || $data[$field] === '' || $data[$field] === []) {
+        $errors[] = "{$field}: campo obrigatório.";
+      }
+    }
+
+    $cnpj = UtilsController::soNumero((string) ($data['cnpj'] ?? ''));
+    if ($cnpj !== '' && !preg_match('/^\d{14}$/', $cnpj)) {
+      $errors[] = 'cnpj: informe os 14 dígitos do CNPJ do emitente.';
+    }
+
+    if (isset($data['cfop']) && !preg_match('/^[1-7]\d{3}$/', (string) $data['cfop'])) {
+      $errors[] = 'cfop: informe um CFOP válido com 4 dígitos.';
+    }
+
+    if (isset($data['modoEmissao']) && !in_array((int) $data['modoEmissao'], [1, 2, 4, 5, 6, 7], true)) {
+      $errors[] = 'modoEmissao: valor inválido para NF-e modelo 55. Use 1, 2, 4, 5, 6 ou 7.';
+    }
+
+    if (isset($data['modalidade_frete']) && !in_array((int) $data['modalidade_frete'], [0, 1, 2, 3, 4, 9], true)) {
+      $errors[] = 'modalidade_frete: use 0, 1, 2, 3, 4 ou 9.';
+    }
+
+    $cliente = $data['cliente'] ?? null;
+    if (!is_array($cliente)) {
+      if (array_key_exists('cliente', $data)) {
+        $errors[] = 'cliente: deve ser um objeto.';
+      }
+    } else {
+      foreach (['nome', 'tipo_documento', 'documento', 'endereco'] as $field) {
+        if (!array_key_exists($field, $cliente) || $cliente[$field] === '' || $cliente[$field] === []) {
+          $errors[] = "cliente.{$field}: campo obrigatório.";
+        }
+      }
+
+      $tipoDocumento = strtoupper(trim((string) ($cliente['tipo_documento'] ?? '')));
+      if ($tipoDocumento !== '' && !in_array($tipoDocumento, ['CPF', 'CNPJ'], true)) {
+        $errors[] = 'cliente.tipo_documento: use CPF ou CNPJ.';
+      }
+
+      $documento = UtilsController::soNumero((string) ($cliente['documento'] ?? ''));
+      $documentLength = $tipoDocumento === 'CPF' ? 11 : ($tipoDocumento === 'CNPJ' ? 14 : null);
+      if ($documentLength !== null && !preg_match('/^\d{' . $documentLength . '}$/', $documento)) {
+        $errors[] = "cliente.documento: deve conter {$documentLength} dígitos para {$tipoDocumento}.";
+      }
+
+      $endereco = $cliente['endereco'] ?? null;
+      if (!is_array($endereco)) {
+        if (array_key_exists('endereco', $cliente)) {
+          $errors[] = 'cliente.endereco: deve ser um objeto.';
+        }
+      } else {
+        foreach (['logradouro', 'numero', 'bairro', 'codigo_municipio', 'municipio', 'uf', 'cep'] as $field) {
+          if (!array_key_exists($field, $endereco) || trim((string) $endereco[$field]) === '') {
+            $errors[] = "cliente.endereco.{$field}: campo obrigatório.";
+          }
+        }
+
+        if (isset($endereco['uf']) && !preg_match('/^[A-Za-z]{2}$/', (string) $endereco['uf'])) {
+          $errors[] = 'cliente.endereco.uf: informe a sigla da UF com 2 letras.';
+        }
+        if (isset($endereco['codigo_municipio']) && !preg_match('/^\d{7}$/', (string) $endereco['codigo_municipio'])) {
+          $errors[] = 'cliente.endereco.codigo_municipio: informe o código IBGE com 7 dígitos.';
+        }
+        if (isset($endereco['cep']) && !preg_match('/^\d{8}$/', UtilsController::soNumero((string) $endereco['cep']))) {
+          $errors[] = 'cliente.endereco.cep: informe um CEP com 8 dígitos.';
+        }
+      }
+    }
+
+    $productsTotal = 0.0;
+    $products = $data['produtos'] ?? null;
+    if (!is_array($products)) {
+      if (array_key_exists('produtos', $data)) {
+        $errors[] = 'produtos: deve ser uma lista.';
+      }
+    } else {
+      foreach ($products as $index => $product) {
+        $path = "produtos[{$index}]";
+        if (!is_array($product)) {
+          $errors[] = "{$path}: deve ser um objeto.";
+          continue;
+        }
+
+        foreach (['codigo', 'ean', 'descricao', 'ncm', 'cfop', 'unidade', 'quantidade', 'valor', 'total', 'origem'] as $field) {
+          if (!array_key_exists($field, $product) || $product[$field] === '') {
+            $errors[] = "{$path}.{$field}: campo obrigatório.";
+          }
+        }
+
+        if (isset($product['ncm']) && !preg_match('/^\d{8}$/', UtilsController::soNumero((string) $product['ncm']))) {
+          $errors[] = "{$path}.ncm: informe um NCM com 8 dígitos.";
+        }
+        if (isset($product['cfop']) && !preg_match('/^[1-7]\d{3}$/', (string) $product['cfop'])) {
+          $errors[] = "{$path}.cfop: informe um CFOP válido com 4 dígitos.";
+        }
+        if (isset($product['quantidade']) && (!is_numeric($product['quantidade']) || (float) $product['quantidade'] <= 0)) {
+          $errors[] = "{$path}.quantidade: deve ser maior que zero.";
+        }
+        foreach (['valor', 'total', 'desconto', 'frete', 'outras_despesas'] as $field) {
+          if (isset($product[$field]) && (!is_numeric($product[$field]) || (float) $product[$field] < 0)) {
+            $errors[] = "{$path}.{$field}: deve ser um número maior ou igual a zero.";
+          }
+        }
+
+        if (is_numeric($product['quantidade'] ?? null) && is_numeric($product['valor'] ?? null) && is_numeric($product['total'] ?? null)) {
+          $expected = round((float) $product['quantidade'] * (float) $product['valor'], 2);
+          if (abs($expected - (float) $product['total']) > 0.01) {
+            $errors[] = sprintf(
+              '%s.total: esperado %.2f (quantidade × valor), recebido %.2f.',
+              $path,
+              $expected,
+              (float) $product['total']
+            );
+          }
+          $productsTotal += (float) $product['total'];
+        }
+      }
+    }
+
+    if (isset($data['total']) && !is_numeric($data['total'])) {
+      $errors[] = 'total: deve ser numérico.';
+    } elseif (is_numeric($data['total'] ?? null) && $productsTotal > 0 && abs($productsTotal - (float) $data['total']) > 0.01) {
+      $errors[] = sprintf('total: a soma dos produtos é %.2f, mas foi informado %.2f.', $productsTotal, (float) $data['total']);
+    }
+
+    $paymentsTotal = 0.0;
+    $payments = $data['pagamentos'] ?? null;
+    if (!is_array($payments)) {
+      if (array_key_exists('pagamentos', $data)) {
+        $errors[] = 'pagamentos: deve ser uma lista.';
+      }
+    } else {
+      foreach ($payments as $index => $payment) {
+        $path = "pagamentos[{$index}]";
+        if (!is_array($payment)) {
+          $errors[] = "{$path}: deve ser um objeto.";
+          continue;
+        }
+        if (!isset($payment['codigo'])) {
+          $errors[] = "{$path}.codigo: campo obrigatório.";
+        }
+        if (!isset($payment['valorpago'])) {
+          $errors[] = "{$path}.valorpago: campo obrigatório.";
+        } elseif (!is_numeric($payment['valorpago']) || (float) $payment['valorpago'] < 0) {
+          $errors[] = "{$path}.valorpago: deve ser um número maior ou igual a zero.";
+        } else {
+          $paymentsTotal += (float) $payment['valorpago'];
+        }
+      }
+    }
+
+    if (isset($data['total_pago']) && is_numeric($data['total_pago']) && abs($paymentsTotal - (float) $data['total_pago']) > 0.01) {
+      $errors[] = sprintf(
+        'total_pago: a soma dos pagamentos é %.2f, mas foi informado %.2f.',
+        $paymentsTotal,
+        (float) $data['total_pago']
+      );
+    }
+
+    if ($errors !== []) {
+      throw new HttpException(
+        'Dados inválidos para emissão da NF-e.',
+        422,
+        ['error_tags' => array_values(array_unique($errors)), 'etapa' => 'validação']
+      );
+    }
+  }
+
+  protected function validateEmissionContext(array $data): void
+  {
+    $errors = [];
+    $issuerUf = strtoupper((string) $this->company->getUf());
+    $recipientUf = strtoupper((string) ($data['cliente']['endereco']['uf'] ?? ''));
+    $cfops = [['path' => 'cfop', 'value' => $data['cfop'] ?? null]];
+
+    foreach ($data['produtos'] as $index => $product) {
+      $cfops[] = [
+        'path' => "produtos[{$index}].cfop",
+        'value' => is_array($product) ? ($product['cfop'] ?? null) : null,
+      ];
+    }
+
+    foreach ($cfops as $cfopData) {
+      $cfop = (string) $cfopData['value'];
+      $firstDigit = substr($cfop, 0, 1);
+      if ($issuerUf !== '' && $recipientUf !== '' && $issuerUf !== $recipientUf && $firstDigit === '5') {
+        $errors[] = sprintf(
+          '%s: CFOP %s é de operação interna, mas o emitente é de %s e o destinatário é de %s. Use um CFOP iniciado por 6.',
+          $cfopData['path'],
+          $cfop,
+          $issuerUf,
+          $recipientUf
+        );
+      } elseif ($issuerUf === $recipientUf && $firstDigit === '6') {
+        $errors[] = sprintf(
+          '%s: CFOP %s é interestadual, mas emitente e destinatário são de %s. Use um CFOP iniciado por 5.',
+          $cfopData['path'],
+          $cfop,
+          $issuerUf
+        );
+      }
+    }
+
+    $crt = (int) $this->company->getCrt();
+    foreach ($data['produtos'] as $index => $product) {
+      if (!is_array($product)) {
+        continue;
+      }
+
+      if ($crt === 1 && array_key_exists('cst_icms', $product) && !UtilsController::validaCSOSN($product['cst_icms'])) {
+        $errors[] = sprintf(
+          'produtos[%d].cst_icms: CSOSN %s inválido para CRT 1. Use 101, 102, 103, 201, 202, 203, 300, 400, 500 ou 900.',
+          $index,
+          (string) $product['cst_icms']
+        );
+      }
+
+      if ($crt === 4 && array_key_exists('csosn', $product) && !in_array((string) $product['csosn'], ['102', '103', '300', '400', '500'], true)) {
+        $errors[] = sprintf(
+          'produtos[%d].csosn: valor %s inválido para CRT 4. Use 102, 103, 300, 400 ou 500.',
+          $index,
+          (string) $product['csosn']
+        );
+      }
+    }
+
+    if ($errors !== []) {
+      throw new HttpException(
+        'Dados fiscais incompatíveis com a operação.',
+        422,
+        ['error_tags' => array_values(array_unique($errors)), 'etapa' => 'validação fiscal']
+      );
+    }
   }
 
   /**
@@ -210,10 +487,11 @@ abstract class BaseFiscalController extends Connection
   public function createNfe($onlyPreview = false)
   {
     if (empty($this->data) || !isset($this->data['cnpj']) || !isset($this->data['cliente'])) {
-      http_response_code(400);
-      echo json_encode(['error' => 'Payload inválido para emissão de NFe']);
+      JsonResponse::error('Payload inválido para emissão de NF-e.', 400);
       return;
     }
+
+    $stage = 'montagem das tags';
 
     try {
       $std = new stdClass();
@@ -225,22 +503,30 @@ abstract class BaseFiscalController extends Connection
       $this->nfe->tagdest($this->generateClientData($this->data));
       $this->nfe->tagenderDest($this->generateClientAddressData($this->data['cliente']['endereco']));
 
-      if ($this->data['total_frete'] ?? 0 > 0) {
+      if (($this->data['total_frete'] ?? 0) > 0) {
         $this->totalFrete = floatval($this->data['total_frete']);
       }
 
       $this->baseTotalIcms = 0;
       $this->totalIcms = 0;
       $this->total_produtos = 0;
+      $this->totalDesconto = 0;
 
-      foreach ($this->data['produtos'] as $index => $produto) {
-        $this->total_produtos += floatval($produto['valor']) * floatval($produto['quantidade']);
+      foreach ($this->data['produtos'] as $produto) {
+        $this->total_produtos += floatval($produto['total']);
+        $this->totalDesconto += floatval($produto['desconto'] ?? 0);
       }
 
       foreach ($this->produtos as $index => $produto) {
         $produto['frete'] = isset($produto['frete']) && $produto['frete'] ? $produto['frete'] : $this->rateioFrete($produto['total'], $this->total_produtos, $this->totalFrete);
 
-        $this->baseCalculo = ($produto['total'] - $produto['desconto'] + $produto['frete'] + ($produto['outras_despesas'] ?? 0));
+        $this->baseCalculo = max(
+          0,
+          floatval($produto['total'])
+          - floatval($produto['desconto'] ?? 0)
+          + floatval($produto['frete'])
+          + floatval($produto['outras_despesas'] ?? 0)
+        );
         $this->origem = $produto['origem'];
 
         $this->nfe->tagprod($this->generateProductData($produto, $index + 1));
@@ -270,7 +556,7 @@ abstract class BaseFiscalController extends Connection
       $this->nfe->taginfRespTec($this->generateResponsavelTecnico());
       $this->nfe->tagtransp($this->generateFreteData($this->data));
 
-      if ($this->modalidadeFrete === 9 && isset($this->data['transportadora'])) {
+      if ($this->modalidadeFrete !== 9 && isset($this->data['transportadora'])) {
         $this->nfe->tagtransporta($this->generateTransportadoraData($this->data['transportadora']));
 
         if (isset($this->data['transportadora']['veiculo'])) {
@@ -287,29 +573,123 @@ abstract class BaseFiscalController extends Connection
         $this->nfe->tagdetPag($this->generatePagamentoData($pagamento));
       }
 
+      $stage = 'geração do XML';
       $this->currentXML = $this->nfe->getXML();
 
+      $xmlErrors = $this->nfeErrors();
+      if ($this->currentXML === '' || $xmlErrors !== []) {
+        throw new \InvalidArgumentException('O XML da NF-e não pôde ser gerado com os dados informados.');
+      }
+
       if ($onlyPreview) {
+        $stage = 'geração da pré-visualização';
         $this->processarPreview();
         return;
       }
 
+      $stage = 'assinatura digital';
       $this->currentXML = $this->tools->signNFe($this->currentXML);
 
+      $stage = 'comunicação com a SEFAZ';
       $this->response = $this->tools->sefazEnviaLote([$this->currentXML], str_pad(1, 15, '0', STR_PAD_LEFT), 1);
 
+      $stage = 'leitura da resposta da SEFAZ';
       $stdCl = new Standardize();
       $std = $stdCl->toStd($this->response);
       $this->setCurrentData($std);
+      $stage = 'processamento da resposta da SEFAZ';
       $this->analisaRetorno($std);
-    } catch (\Exception $e) {
-      http_response_code(500);
-      echo json_encode([
-        'error' => $e->getMessage(),
-        "error_tags" => $this->nfe->getErrors(),
-        "xml" => $this->nfe->getXML()
+    } catch (\Throwable $e) {
+      $this->logEmissionException($e, $stage);
+      $isPayloadError = $e instanceof \InvalidArgumentException
+        && in_array($stage, ['montagem das tags', 'geração do XML', 'geração da pré-visualização'], true);
+      $isSefazError = in_array($stage, [
+        'comunicação com a SEFAZ',
+        'leitura da resposta da SEFAZ',
+        'processamento da resposta da SEFAZ',
+      ], true);
+
+      $status = $isPayloadError ? 422 : ($isSefazError ? 502 : 500);
+      $message = $isPayloadError
+        ? 'Não foi possível montar a NF-e com os dados informados.'
+        : ($isSefazError ? 'Não foi possível concluir a comunicação com a SEFAZ.' : 'Não foi possível emitir a NF-e.');
+
+      JsonResponse::error($message, $status, [
+        'error_tags' => $this->emissionErrorTags($e, $stage),
+        'etapa' => $stage,
       ]);
     }
+  }
+
+  protected function nfeErrors(): array
+  {
+    if (!is_object($this->nfe) || !method_exists($this->nfe, 'getErrors')) {
+      return [];
+    }
+
+    return array_values(array_unique(array_filter(
+      array_map(static fn($error) => trim((string) $error), $this->nfe->getErrors()),
+      static fn($error) => $error !== ''
+    )));
+  }
+
+  protected function emissionErrorTags(\Throwable $exception, string $stage): array
+  {
+    $errors = $this->nfeErrors();
+    $exceptionMessage = $this->publicEmissionExceptionMessage($exception, $stage);
+
+    if ($exceptionMessage !== '') {
+      $errors[] = $exceptionMessage;
+    }
+
+    if ($errors === []) {
+      $errors[] = "Falha na etapa: {$stage}.";
+    }
+
+    return array_values(array_unique($errors));
+  }
+
+  protected function publicEmissionExceptionMessage(\Throwable $exception, string $stage): string
+  {
+    $message = trim(preg_replace('/\s+/', ' ', $exception->getMessage()) ?? '');
+
+    if ($stage === 'assinatura digital') {
+      return 'Não foi possível assinar o XML. Verifique a validade, o arquivo e a senha do certificado digital da empresa.';
+    }
+
+    if (preg_match('/could not load PEM client certificate|bad end line/i', $message)) {
+      return 'O PFX foi lido, mas o certificado PEM temporário usado na conexão com a SEFAZ ficou malformado.';
+    }
+
+    if (preg_match('/certific|certificate|private key|openssl|pfx|pkcs/i', $message)) {
+      return 'Não foi possível usar o certificado digital da empresa. Verifique o arquivo, a senha e a validade.';
+    }
+
+    if (preg_match('/timed? out|timeout|could not resolve|connection refused|failed to connect|curl|soap|webservice/i', $message)) {
+      return 'Não foi possível conectar ao serviço da SEFAZ. Tente novamente e verifique a disponibilidade do autorizador.';
+    }
+
+    if (preg_match('/SQLSTATE|PDO|password|senha|secret|BEGIN [A-Z ]*PRIVATE KEY|Stack trace/i', $message)) {
+      return "Falha interna na etapa: {$stage}.";
+    }
+
+    if ($message !== '' && !str_contains($message, '<NFe') && mb_strlen($message) <= 500) {
+      return $message;
+    }
+
+    return "Falha na etapa: {$stage}.";
+  }
+
+  protected function logEmissionException(\Throwable $exception, string $stage): void
+  {
+    error_log(sprintf(
+      '[NF-e][%s] %s: %s em %s:%d',
+      $stage,
+      get_class($exception),
+      $exception->getMessage(),
+      $exception->getFile(),
+      $exception->getLine()
+    ));
   }
 
   /**
@@ -318,48 +698,29 @@ abstract class BaseFiscalController extends Connection
   public function cancelNfe($data)
   {
     try {
-      if (!isset($data['cnpj']) || empty($data['cnpj'])) {
-        http_response_code(400);
-        echo json_encode([
-          "error" => "CNPJ não informado"
-        ]);
-        return;
+      foreach (['cnpj', 'chave', 'justificativa'] as $field) {
+        if (empty($data[$field])) {
+          JsonResponse::error("Campo obrigatório: {$field}", 422);
+          return;
+        }
       }
 
-      if (!isset($data['chave']) || empty($data['chave'])) {
-        http_response_code(400);
-        echo json_encode([
-          "error" => "Chave da NFe não informada"
-        ]);
-        return;
-      }
-
-      if (!isset($data['justificativa']) || empty($data['justificativa'])) {
-        http_response_code(400);
-        echo json_encode([
-          "error" => "Justificativa não informada"
-        ]);
-        return;
-      }
-
-      if (strlen($data['justificativa']) < 15) {
-        http_response_code(400);
-        echo json_encode([
-          "error" => "Justificativa deve ter no mínimo 15 caracteres"
-        ]);
+      if (mb_strlen(trim($data['justificativa'])) < 15) {
+        JsonResponse::error('Justificativa deve ter no mínimo 15 caracteres.', 422);
         return;
       }
 
       if ($this->bootstrapCompanyAndToolsByCnpj($data['cnpj']) === false) {
-        http_response_code(404);
-        echo json_encode([
-          "error" => "Empresa não encontrada"
-        ]);
+        JsonResponse::error('Empresa não encontrada.', 404);
         return;
       }
 
       $emissoesModel = new EmissoesModel($data['chave']);
       $emissao = $emissoesModel->getCurrent();
+      if ($emissao->tipo !== 'NFE') {
+        JsonResponse::error('A chave informada não pertence a uma NF-e.', 422);
+        return;
+      }
 
       $response = $this->tools->sefazCancela($emissao->chave, $data['justificativa'], $emissao->protocolo);
       $stdCl = new Standardize();
@@ -384,25 +745,30 @@ abstract class BaseFiscalController extends Connection
           "protocolo" => $protocoloCancelamento
         ]);
 
-        http_response_code(200);
-        echo json_encode([
+        JsonResponse::send([
           "chave" => $emissao->chave,
           "avisos" => [],
           "protocolo" => $protocoloCancelamento,
-          "link" => $_ENV['URL_BASE'] . $link,
+          "link" => UtilsController::publicUrl($link),
           "xml" => $emissao->xml,
           "pdf" => base64_encode($pdf)
         ]);
       } else {
-        http_response_code(403);
-        echo json_encode([
+        JsonResponse::send([
           "status" => "error",
           "message" => "Erro ao cancelar: " . $std->xMotivo
-        ]);
+        ], 422);
       }
-    } catch (\Exception $e) {
-      http_response_code(500);
-      echo json_encode(['error' => $e->getMessage()]);
+    } catch (\RuntimeException $e) {
+      if ($e->getMessage() === 'Emissão não encontrada.') {
+        JsonResponse::error($e->getMessage(), 404);
+        return;
+      }
+      error_log($e->getMessage());
+      JsonResponse::error('Erro interno ao cancelar a NF-e.', 500);
+    } catch (\Throwable $e) {
+      error_log($e->getMessage());
+      JsonResponse::error('Erro interno ao cancelar a NF-e.', 500);
     }
   }
 
@@ -411,19 +777,19 @@ abstract class BaseFiscalController extends Connection
    */
   public function gerarCC($data)
   {
-    if (!isset($data['cnpj']) || empty($data['cnpj'])) {
-      http_response_code(400);
-      echo json_encode([
-        "error" => "CNPJ não informado"
-      ]);
+    foreach (['cnpj', 'chave', 'carta'] as $field) {
+      if (empty($data[$field])) {
+        JsonResponse::error("Campo obrigatório: {$field}", 422);
+        return;
+      }
+    }
+    if (mb_strlen(trim($data['carta'])) < 15) {
+      JsonResponse::error('A correção deve ter no mínimo 15 caracteres.', 422);
       return;
     }
 
     if ($this->bootstrapCompanyAndToolsByCnpj($data['cnpj']) === false) {
-      http_response_code(404);
-      echo json_encode([
-        "error" => "Empresa não encontrada"
-      ]);
+      JsonResponse::error('Empresa não encontrada.', 404);
       return;
     }
 
@@ -431,12 +797,19 @@ abstract class BaseFiscalController extends Connection
     $correcao = $data['carta'];
 
     // Busca a emissão original
-    $emissoesModel = new EmissoesModel($data['chave']);
-    $emissao = $emissoesModel->getCurrent();
+    try {
+      $emissoesModel = new EmissoesModel($data['chave']);
+      $emissao = $emissoesModel->getCurrent();
+    } catch (\RuntimeException $exception) {
+      if ($exception->getMessage() === 'Emissão não encontrada.') {
+        JsonResponse::error($exception->getMessage(), 404);
+        return;
+      }
+      throw $exception;
+    }
 
-    if (!$emissao) {
-      http_response_code(404);
-      echo json_encode(['error' => 'NFe não encontrada']);
+    if ($emissao->tipo !== 'NFE') {
+      JsonResponse::error('A chave informada não pertence a uma NF-e.', 422);
       return;
     }
 
@@ -449,12 +822,11 @@ abstract class BaseFiscalController extends Connection
     $std = $stdCl->toStd($response);
 
     if (!in_array($std->cStat, ['135', '136', '128'])) {
-      http_response_code(400);
-      echo json_encode([
+      JsonResponse::send([
         'error' => 'Erro ao processar CC-e',
         'codigo' => $std->cStat,
         'motivo' => $std->xMotivo
-      ]);
+      ], 422);
       return;
     }
 
@@ -495,20 +867,18 @@ abstract class BaseFiscalController extends Connection
         "protocolo" => $protocolo
       ]);
 
-      http_response_code(200);
-      echo json_encode([
+      JsonResponse::send([
         'chave' => $chaveNFe,
         'avisos' => [],
         'protocolo' => $protocolo,
         'sequencia' => $grupoCorrecao,
-        'link' => $_ENV['URL_BASE'] . $link,
+        'link' => UtilsController::publicUrl($link),
         'xml' => $xmlProtocolado,
         'pdf' => base64_encode($pdfCCe)
       ]);
     } catch (\Exception $e) {
       // Se falhar ao gerar o PDF, retorna sem o PDF mas com sucesso no evento
-      http_response_code(200);
-      echo json_encode([
+      JsonResponse::send([
         'chave' => $chaveNFe,
         'avisos' => ['Erro ao gerar PDF: ' . $e->getMessage()],
         'protocolo' => $protocolo,
@@ -533,7 +903,6 @@ abstract class BaseFiscalController extends Connection
       // "schemes"     => "PL_009_V4",
       "schemes"     => "PL_010_V1.30",
       "versao"      => '4.00',
-      "tokenIBPT"   => "AAAAAAA",
       "CSC"         => $this->csc,
       "CSCid"       => $this->csc_id,
       "proxyConf"   => [
@@ -804,9 +1173,9 @@ abstract class BaseFiscalController extends Connection
     $std->item = $item + 1;
     $std->cProdANP = $produto['codigo_anp'];
     $std->descANP = $produto['descricao_anp'];
-    $std->pGLP = $produto['gpl_percentual'];
-    $std->pGNn = $produto['gas_percentual_nacional'];
-    $std->vPart = $produto['valor_partida'];
+    $std->pGLP = $produto['gpl_percentual'] ?? 0;
+    $std->pGNn = $produto['gas_percentual_nacional'] ?? 0;
+    $std->vPart = $produto['valor_partida'] ?? 0;
     $std->UFCons = $this->company->getUf();
 
     return $std;
@@ -814,29 +1183,30 @@ abstract class BaseFiscalController extends Connection
 
   protected function addICMSCombTag($produto, $item)
   {
+    $icms = $produto['icms_combustivel'] ?? null;
+    if (!is_array($icms) || empty($icms['CST'])) {
+      throw new \InvalidArgumentException(
+        "Produto de combustível {$item} exige o bloco icms_combustivel com CST e valores fiscais."
+      );
+    }
+
     $std = new \stdClass();
     $std->item = $item + 1;
-    $std->orig = '0';
-    $std->CST = '61';
-    $std->modBC = '3';
-    $std->vBC = '1000.00';
-    $std->vBCICMS = '1000.00';
-    $std->pICMS = '18.00';
-    $std->vICMS = '180.00';
-    $std->vBCICMSST = '1200.00';
-    $std->pICMSST = '18.00';
-    $std->vICMSST = '216.00';
-    $std->vBCFCP = '1000.00';
-    $std->pFCP = '2.00';
-    $std->vFCP = '20.00';
-    $std->vBCFCPST = '1200.00';
-    $std->pFCPST = '2.00';
-    $std->vFCPST = '24.00';
-    $std->adRemICMS = '0.50';
-    $std->vICMSMono = '50.00';
-    $std->adRemICMSRet = '0.30';
-    $std->vICMSMonoRet = '30.00';
-    $std->qBCMonoRet = $produto['quantidade'];
+    $std->orig = (string) ($icms['orig'] ?? $produto['origem'] ?? 0);
+    $std->CST = (string) $icms['CST'];
+
+    $allowedFields = [
+      'modBC', 'vBC', 'vBCICMS', 'pICMS', 'vICMS', 'vBCICMSST', 'pICMSST',
+      'vICMSST', 'vBCFCP', 'pFCP', 'vFCP', 'vBCFCPST', 'pFCPST', 'vFCPST',
+      'qBCMono', 'adRemICMS', 'vICMSMono', 'qBCMonoRet', 'adRemICMSRet',
+      'vICMSMonoRet', 'qBCMonoDif', 'adRemICMSDif', 'vICMSMonoDif',
+    ];
+    foreach ($allowedFields as $field) {
+      if (array_key_exists($field, $icms)) {
+        $std->{$field} = $icms[$field];
+      }
+    }
+
     return $std;
   }
 
@@ -857,21 +1227,21 @@ abstract class BaseFiscalController extends Connection
 
     $totalProdutos = floatval($this->total_produtos);
 
-    if (isset($data['desconto']) && $data['desconto'] > 0) {
-      $std->vDesc = number_format($data['desconto'], 2, ".", "");
-      $totalProdutos -= floatval($data['desconto']);
-    }
-
     $std->vFrete = $this->totalFrete;
     $std->vSeg = 0.00;
-    $std->vDesc = 0.00;
+    $std->vDesc = number_format($this->totalDesconto, 2, ".", "");
     $std->vII = 0.00;
-    $std->vIPI = 0.00;
+    $std->vIPI = number_format($this->totalIPI, 2, ".", "");
     $std->vIPIDevol = 0.00;
     $std->vPIS = $this->totalPIS;
     $std->vCOFINS = $this->totalCOFINS;
     $std->vOutro = $this->totalOutrasDespesas;
-    $std->vNF = number_format(($totalProdutos + $this->totalFrete + $this->totalOutrasDespesas), 2, ".", "");
+    $std->vNF = number_format(
+      $totalProdutos - $this->totalDesconto + $this->totalFrete + $this->totalOutrasDespesas,
+      2,
+      ".",
+      ""
+    );
     $std->vTotTrib = number_format($this->totalImposto, 2, ".", "");
 
     return $std;
@@ -912,7 +1282,7 @@ abstract class BaseFiscalController extends Connection
   protected function generateFreteData($data)
   {
     $std = new stdClass();
-    $std->modFrete = $data['modalidade_frete'] ?? 9;
+    $std->modFrete = (int) ($data['modalidade_frete'] ?? 9);
     $this->modalidadeFrete = $std->modFrete;
 
     return $std;
@@ -981,20 +1351,15 @@ abstract class BaseFiscalController extends Connection
 
   protected function generateResponsavelTecnico()
   {
-    $std = new stdClass();
-    $std->CNPJ = "45730598000102";
-    $std->xContato = "Logic Tecnologia e Inovação";
-    $std->email = "contato.logictec@gmail.com";
-    $std->fone = "92991225648";
-    $std->idCSRT = "01";
-
-    return $std;
+    return UtilsController::technicalResponsible();
   }
 
   protected function generateAutXMLData($data)
   {
     $std = new stdClass();
-    $std->CNPJ = isset($data['cnpj_consulta']) ? UtilsController::soNumero($data['cnpj_consulta']) : '13937073000156';
+    $std->CNPJ = isset($data['cnpj_consulta'])
+      ? UtilsController::soNumero($data['cnpj_consulta'])
+      : UtilsController::environment('AUTXML_CNPJ_PADRAO', '13937073000156');
     return $std;
   }
 
@@ -1017,7 +1382,7 @@ abstract class BaseFiscalController extends Connection
 
   protected function atualizaNumero()
   {
-    if ($this->ambiente === 1) {
+    if ((int) $this->ambiente === 1) {
       $this->company->setNumero_nfe(intval($this->numero) + 1);
       $this->company->update([
         "numero_nfe" => $this->company->getNumero_nfe()
@@ -1049,58 +1414,6 @@ abstract class BaseFiscalController extends Connection
 
   // ==================== MÉTODOS DE PROCESSAMENTO DE RETORNO ====================
 
-  protected function analisaRetorno($std)
-  {
-    try {
-      if (isset($std->cStat)) {
-        $this->setStatus($std->cStat);
-        switch ($std->cStat) {
-          case 100:
-            $this->processarEmissao($std);
-            break;
-          case 103:
-            $this->processarLote($this->getCurrentData());
-            break;
-          case 104:
-            $this->loteProcessado($std);
-            break;
-          case 105:
-            $this->processarLote($this->getCurrentData());
-            break;
-          default:
-            http_response_code(403);
-            echo json_encode([
-              "código" => $std->cStat,
-              "error" => $std->xMotivo,
-              "xml" => $this->currentXML
-            ]);
-            break;
-        }
-      }
-    } catch (\Exception $e) {
-      http_response_code(500);
-      echo json_encode(['error' => $e->getMessage()]);
-    }
-  }
-
-  protected function processarLote($std)
-  {
-    $recibo = $std->infRec->nRec;
-    $this->response = $this->tools->sefazConsultaRecibo($recibo);
-
-    $stdCl = new Standardize();
-    $std = $stdCl->toStd($this->response);
-
-    $this->analisaRetorno($std);
-  }
-
-  protected function loteProcessado($std)
-  {
-    foreach ($std->protNFe as $prot) {
-      $this->analisaRetorno($prot);
-    }
-  }
-
   protected function processarEmissao($std)
   {
     if (isset($std->protNFe)) {
@@ -1119,7 +1432,6 @@ abstract class BaseFiscalController extends Connection
     $this->currentXML = Complements::toAuthorize($this->currentXML, $this->response);
 
     $danfe = new Danfe($this->currentXML);
-    $danfe->debugMode(true);
     $danfe->setDefaultFont('arial');
     $danfe->creditsIntegratorFooter('Estoque Premium - Sistema de Gestão Comercial');
     $this->currentPDF = $danfe->render();
@@ -1129,12 +1441,11 @@ abstract class BaseFiscalController extends Connection
     $this->atualizaNumero();
     $this->salvaEmissao();
 
-    http_response_code(200);
-    echo json_encode([
+    JsonResponse::send([
       "chave" => $this->currentChave,
       "avisos" => $this->warnings,
       "protocolo" => $this->numeroProtocolo,
-      "link" => $_ENV['URL_BASE'] . $link,
+      "link" => UtilsController::publicUrl($link),
       "xml" => $this->currentXML,
       "pdf" => base64_encode($this->currentPDF)
     ]);
@@ -1143,21 +1454,16 @@ abstract class BaseFiscalController extends Connection
   protected function processarPreview()
   {
     $danfe = new Danfe($this->currentXML);
-    // $danfe->debugMode(true);
     $danfe->setDefaultFont('arial');
     $danfe->creditsIntegratorFooter('Estoque Premium - Sistema de Gestão Comercial');
     $this->currentPDF = $danfe->render();
     UtilsController::uploadXmlPreview($this->currentXML, $this->currentChave);
     $link = UtilsController::uploadPdfPreview($this->currentPDF, $this->currentChave . uniqid());
-    // $this->atualizaNumero();
-    // $this->salvaEmissao();
-
-    http_response_code(200);
-    echo json_encode([
+    JsonResponse::send([
       "chave" => $this->currentChave,
       "avisos" => $this->warnings,
       "protocolo" => $this->numeroProtocolo,
-      "link" => $_ENV['URL_BASE'] . $link,
+      "link" => UtilsController::publicUrl($link),
       "xml" => $this->currentXML,
       "pdf" => base64_encode($this->currentPDF)
     ]);

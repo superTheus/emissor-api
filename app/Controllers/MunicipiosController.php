@@ -2,73 +2,72 @@
 
 namespace App\Controllers;
 
+use App\Http\JsonResponse;
 use App\Models\MunicipioModel;
 
-class MunicipiosController
+final class MunicipiosController
 {
-  protected $municipiosModel;
+  private MunicipioModel $model;
 
   public function __construct($id = null)
   {
-    $this->municipiosModel = new MunicipioModel($id ? $id : null);
+    $this->model = new MunicipioModel($id);
   }
 
-  public function find($data)
+  public function find($data): void
   {
     try {
-      $filter = $data && isset($data['filter']) ? $data['filter'] : null;
-      $limit = $data && isset($data['limit']) ? $data['limit'] : null;
-      $results = $this->municipiosModel->find($filter, $limit);
-
-      http_response_code(200);
-      echo json_encode($results);
-    } catch (\Exception $e) {
-      http_response_code(500); // Internal Server Error
-      echo json_encode(['error' => $e->getMessage()]);
+      JsonResponse::send($this->search($data));
+    } catch (\InvalidArgumentException $exception) {
+      JsonResponse::error($exception->getMessage(), 422);
+    } catch (\Throwable $exception) {
+      error_log($exception->getMessage());
+      JsonResponse::error('Erro interno ao consultar municípios.', 500);
     }
   }
 
-  public function findunique($data)
+  public function findunique($data): void
   {
     try {
-      $filter = $data && isset($data['filter']) ? $data['filter'] : null;
-      $limit = $data && isset($data['limit']) ? $data['limit'] : null;
-      $results = $this->municipiosModel->find($filter, $limit);
-
-      if ($results && count($results) > 0) {
-        $results = $results[0];
-      } else {
-        throw new \Exception("Município não encontrado");
-      }
-
-      http_response_code(200);
-      echo json_encode($results);
-    } catch (\Exception $e) {
-      http_response_code(401);
-      echo $e->getMessage();
-    }
-  }
-
-  public function findByUf($uf)
-  {
-    try {
-      $estadoController = new EstadosController();
-      $estado = $estadoController->findOnly(['filter' => ["uf" => $uf], 'limit' => 1]);
-
-
-      if (!$estado) {
-        http_response_code(404);
-        echo json_encode(['error' => 'Estado não encontrado']);
+      $results = $this->search($data);
+      if ($results === []) {
+        JsonResponse::error('Município não encontrado.', 404);
         return;
       }
 
-      $results = $this->municipiosModel->find(["id_estado" => $estado['id']]);
-
-      http_response_code(200);
-      echo json_encode($results);
-    } catch (\Exception $e) {
-      http_response_code(500); // Internal Server Error
-      echo json_encode(['error' => $e->getMessage()]);
+      JsonResponse::send($results[0]);
+    } catch (\InvalidArgumentException $exception) {
+      JsonResponse::error($exception->getMessage(), 422);
+    } catch (\Throwable $exception) {
+      error_log($exception->getMessage());
+      JsonResponse::error('Erro interno ao consultar o município.', 500);
     }
+  }
+
+  public function findByUf($uf): void
+  {
+    try {
+      $estado = (new EstadosController())->findOnly([
+        'filter' => ['uf' => $uf],
+        'limit' => 1,
+      ]);
+
+      if (!$estado || !isset($estado['id'])) {
+        JsonResponse::error('Estado não encontrado.', 404);
+        return;
+      }
+
+      JsonResponse::send($this->model->find(['id_estado' => $estado['id']]));
+    } catch (\Throwable $exception) {
+      error_log($exception->getMessage());
+      JsonResponse::error('Erro interno ao consultar municípios por UF.', 500);
+    }
+  }
+
+  private function search($data): array
+  {
+    $data = is_array($data) ? $data : [];
+
+    return $this->model->find($data['filter'] ?? [], $data['limit'] ?? null);
   }
 }

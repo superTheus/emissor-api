@@ -2,10 +2,13 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\FindsByFilters;
 use stdClass;
 
 class FormaPagamentoModel extends Connection
 {
+  use FindsByFilters;
+
   private $conn;
   private $codigo;
   private $descricao;
@@ -33,11 +36,14 @@ class FormaPagamentoModel extends Connection
       $stmt->execute();
 
       $forma = $stmt->fetch(\PDO::FETCH_ASSOC);
+      if (!$forma) {
+        throw new \RuntimeException('Forma de pagamento não encontrada.');
+      }
       $this->setDescricao($forma['descricao']);
       $this->setCod_meio($forma['cod_meio']);
       $this->setMeio($forma['meio']);
     } catch (\PDOException $e) {
-      echo $e->getMessage();
+      throw new \RuntimeException('Erro ao carregar a forma de pagamento.', 0, $e);
     }
   }
 
@@ -54,38 +60,12 @@ class FormaPagamentoModel extends Connection
 
   public function find($filter = [], $limit = null)
   {
-    $sql = "SELECT * FROM {$this->table}";
+    return $this->findByFilters($filter, $limit);
+  }
 
-    if (!empty($filter)) {
-      $sql .= " WHERE ";
-      $sql .= implode(" AND ", array_map(function ($column) {
-        return "$column = :$column";
-      }, array_keys($filter)));
-    }
-
-    if ($limit !== null) {
-      $sql .= " LIMIT :limit";
-    }
-
-    try {
-      $stmt = $this->conn->prepare($sql);
-
-      if (!empty($filter)) {
-        foreach ($filter as $column => $value) {
-          $stmt->bindValue(":$column", $value);
-        }
-      }
-
-      if ($limit !== null) {
-        $stmt->bindValue(':limit', (int) $limit, \PDO::PARAM_INT);
-      }
-
-      $stmt->execute();
-
-      return $stmt->fetchAll(\PDO::FETCH_ASSOC);
-    } catch (\PDOException $e) {
-      echo $e->getMessage();
-    }
+  protected function filterableColumns(): array
+  {
+    return ['codigo', 'descricao', 'cod_meio', 'meio'];
   }
 
   /**

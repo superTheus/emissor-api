@@ -4,28 +4,10 @@ namespace App\Controllers;
 
 use App\Models\FormaPagamentoModel;
 
-class FormaPagamentoController
+final class FormaPagamentoController extends LookupController
 {
-  protected $formaPagamentoModel;
-
-  public function __construct($id = null)
+  protected function modelClass(): string
   {
-    $this->formaPagamentoModel = new FormaPagamentoModel($id ? $id : null);
-  }
-
-  public function find($data)
-  {
-    try {
-      $companyModel = new FormaPagamentoModel();
-      $filter = $data && isset($data['filter']) ? $data['filter'] : null;
-      $limit = $data && isset($data['limit']) ? $data['limit'] : null;
-      $results = $companyModel->find($filter, $limit);
-
-      http_response_code(200);
-      echo json_encode($results);
-    } catch (\Exception $e) {
-      http_response_code(500); // Internal Server Error
-      echo json_encode(['error' => $e->getMessage()]);
-    }
+    return FormaPagamentoModel::class;
   }
 }

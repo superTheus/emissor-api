@@ -2,6 +2,7 @@
 
 namespace App\Controllers;
 
+use App\Http\JsonResponse;
 use App\Models\CompanyModel;
 
 class UtilsController
@@ -11,11 +12,49 @@ class UtilsController
     return preg_replace("/[^0-9]/", "", $str);
   }
 
-  public static function getCertifcado($certificado)
+  public static function publicUrl(string $path): string
   {
-    $folderPath = "app/storage/certificados";
-    $certificadoPath = $folderPath . "/" . $certificado;
-    return file_get_contents($certificadoPath);
+    $baseUrl = rtrim((string) ($_ENV['URL_BASE'] ?? getenv('URL_BASE') ?: ''), '/');
+    $normalizedPath = ltrim(str_replace('\\', '/', $path), '/');
+
+    return $baseUrl === '' ? $normalizedPath : "{$baseUrl}/{$normalizedPath}";
+  }
+
+  public static function technicalResponsible(): \stdClass
+  {
+    $data = new \stdClass();
+    $data->CNPJ = self::environment('RESP_TEC_CNPJ', '45730598000102');
+    $data->xContato = self::environment('RESP_TEC_CONTATO', 'Logic Tecnologia e Inovação');
+    $data->email = self::environment('RESP_TEC_EMAIL', 'contato.logictec@gmail.com');
+    $data->fone = self::environment('RESP_TEC_TELEFONE', '92991225648');
+    $data->idCSRT = self::environment('RESP_TEC_ID_CSRT', '01');
+
+    return $data;
+  }
+
+  public static function environment(string $key, $default = null)
+  {
+    $value = $_ENV[$key] ?? getenv($key);
+
+    return $value === false || $value === null || $value === '' ? $default : $value;
+  }
+
+  public static function getCertificado($certificado)
+  {
+    $certificatePath = dirname(__DIR__, 2)
+      . '/app/storage/certificados/'
+      . basename((string) $certificado);
+
+    if (!is_file($certificatePath)) {
+      throw new \RuntimeException('Certificado não encontrado.');
+    }
+
+    $content = file_get_contents($certificatePath);
+    if ($content === false) {
+      throw new \RuntimeException('Não foi possível ler o certificado.');
+    }
+
+    return $content;
   }
 
   /**
@@ -33,13 +72,35 @@ class UtilsController
       $certificadoContent = file_get_contents($certificadoContent);
     }
 
+    // A leitura nativa preserva a cadeia intermediária contida no PFX.
+    // Sem essa cadeia, a SEFAZ pode recusar o certificado durante o TLS.
+    $nativeCertificates = [];
+    if (@openssl_pkcs12_read($certificadoContent, $nativeCertificates, $senha)) {
+      return [
+        'cert' => self::normalizePem($nativeCertificates['cert']),
+        'pkey' => self::normalizePem($nativeCertificates['pkey']),
+        'extracerts' => array_values(array_map(
+          static fn($certificate) => self::normalizePem($certificate),
+          $nativeCertificates['extracerts'] ?? []
+        )),
+      ];
+    }
+
     // Salva em arquivo temporário
-    $caminhoTemporario = tempnam(sys_get_temp_dir(), 'cert') . '.p12';
-    file_put_contents($caminhoTemporario, $certificadoContent);
-    $caminhoConvertido = tempnam(sys_get_temp_dir(), 'cert') . '.pem';
+    $caminhoTemporario = tempnam(sys_get_temp_dir(), 'cert');
+    $caminhoConvertido = tempnam(sys_get_temp_dir(), 'cert');
+    if ($caminhoTemporario === false || $caminhoConvertido === false) {
+      throw new \RuntimeException('Não foi possível criar arquivos temporários para o certificado.');
+    }
+    file_put_contents($caminhoTemporario, $certificadoContent, LOCK_EX);
 
     // Cria arquivo de configuração OpenSSL que força uso de algoritmos legacy
-    $opensslConfig = tempnam(sys_get_temp_dir(), 'ssl') . '.cnf';
+    $opensslConfig = tempnam(sys_get_temp_dir(), 'ssl');
+    if ($opensslConfig === false) {
+      @unlink($caminhoTemporario);
+      @unlink($caminhoConvertido);
+      throw new \RuntimeException('Não foi possível preparar a configuração OpenSSL.');
+    }
     $configContent = <<<CONF
 openssl_conf = openssl_init
 
@@ -71,10 +132,10 @@ CONF;
     ];
 
     $comando = sprintf(
-      'openssl pkcs12 -in %s -out %s -nodes -password pass:%s -legacy',
+      'openssl pkcs12 -in %s -out %s -nodes -passin %s -legacy',
       escapeshellarg($caminhoTemporario),
       escapeshellarg($caminhoConvertido),
-      escapeshellarg($senha)
+      escapeshellarg('pass:' . $senha)
     );
 
     $process = proc_open($comando, $descriptors, $pipes, null, $env);
@@ -96,10 +157,10 @@ CONF;
     // Se falhou, tenta sem -legacy
     if (!$success) {
       $comando = sprintf(
-        'openssl pkcs12 -in %s -out %s -nodes -password pass:%s',
+        'openssl pkcs12 -in %s -out %s -nodes -passin %s',
         escapeshellarg($caminhoTemporario),
         escapeshellarg($caminhoConvertido),
-        escapeshellarg($senha)
+        escapeshellarg('pass:' . $senha)
       );
 
       $process = proc_open($comando, $descriptors, $pipes, null, $env);
@@ -130,8 +191,13 @@ CONF;
     $pemContent = file_get_contents($caminhoConvertido);
     @unlink($caminhoConvertido);
 
-    // Extrai as partes do PEM - suporta múltiplos formatos de chave privada
-    preg_match('/-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----/s', $pemContent, $certMatch);
+    // No fallback legacy, extrai todos os certificados e identifica o
+    // certificado final pela correspondência com a chave privada.
+    preg_match_all(
+      '/-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----/s',
+      $pemContent,
+      $certMatches
+    );
 
     // Tenta diferentes formatos de chave privada
     if (!preg_match('/-----BEGIN PRIVATE KEY-----.*?-----END PRIVATE KEY-----/s', $pemContent, $keyMatch)) {
@@ -143,18 +209,34 @@ CONF;
       preg_match('/-----BEGIN ENCRYPTED PRIVATE KEY-----.*?-----END ENCRYPTED PRIVATE KEY-----/s', $pemContent, $keyMatch);
     }
 
-    if (!isset($certMatch[0])) {
+    if (empty($certMatches[0])) {
       return false;
     }
 
-    // Garante que termina com quebra de linha
-    $cert = trim($certMatch[0]) . "\n";
-    $pkey = isset($keyMatch[0]) ? trim($keyMatch[0]) . "\n" : null;
+    $pkey = isset($keyMatch[0]) ? self::normalizePem($keyMatch[0]) : null;
+
+    $leafIndex = 0;
+    if ($pkey !== null) {
+      foreach ($certMatches[0] as $index => $candidate) {
+        if (@openssl_x509_check_private_key($candidate, $pkey)) {
+          $leafIndex = $index;
+          break;
+        }
+      }
+    }
+
+    $cert = self::normalizePem($certMatches[0][$leafIndex]);
+    $extraCertificates = [];
+    foreach ($certMatches[0] as $index => $candidate) {
+      if ($index !== $leafIndex) {
+        $extraCertificates[] = self::normalizePem($candidate);
+      }
+    }
 
     $result = [
       'cert' => $cert,
       'pkey' => $pkey,
-      'extracerts' => []
+      'extracerts' => $extraCertificates
     ];
 
     return $result;
@@ -172,202 +254,133 @@ CONF;
   {
     $certs = self::openCertificate($certificadoContent, $senha);
 
-    if (!$certs) {
+    if (!$certs || empty($certs['cert']) || empty($certs['pkey'])) {
       throw new \Exception("Impossível ler o certificado. Verifique a senha ou formato do arquivo.");
     }
 
-    if (empty($certs['pkey'])) {
-      throw new \Exception("Chave privada não encontrada no certificado.");
-    }
+    // Apenas adapta o resultado da mesma leitura do PFX para os tipos exigidos
+    // pelo construtor do NFePHP. Não aplica regras de vigência ou documento.
+    $privateKeyPem = self::normalizePem($certs['pkey']);
+    $publicKeyPem = self::normalizePem($certs['cert']);
 
-    // Garante que as chaves estão formatadas corretamente (com quebras de linha)
-    $privateKeyPem = trim($certs['pkey']);
-    $publicKeyPem = trim($certs['cert']);
-
-    // Valida que os PEM estão corretos
-    if (strpos($privateKeyPem, '-----BEGIN') === false || strpos($privateKeyPem, '-----END') === false) {
-      throw new \Exception("Formato de chave privada inválido.");
-    }
-    if (strpos($publicKeyPem, '-----BEGIN CERTIFICATE-----') === false) {
-      throw new \Exception("Formato de certificado público inválido.");
-    }
-
-    // Cria objetos NFePHP com as chaves extraídas
     $privateKey = new \NFePHP\Common\Certificate\PrivateKey($privateKeyPem);
     $publicKey = new \NFePHP\Common\Certificate\PublicKey($publicKeyPem);
-    $chainKeys = new \NFePHP\Common\Certificate\CertificationChain();
+    $chainKeys = new \NFePHP\Common\Certificate\CertificationChain(
+      implode('', $certs['extracerts'] ?? [])
+    );
 
-    // Cria o objeto Certificate usando o construtor público
-    $certificate = new \NFePHP\Common\Certificate(
+    return new \NFePHP\Common\Certificate(
       $privateKey,
       $publicKey,
       $chainKeys
     );
-
-    return $certificate;
   }
 
-  public static function debugCertificate($cnpj)
+  private static function normalizePem(string $pem): string
   {
-    $companyModel = new CompanyModel();
-    $company = $companyModel->find([
-      "cnpj" => $cnpj
-    ]);
-
-    if ($company) {
-      $company = new CompanyModel($company[0]['id']);
-
-      try {
-        $certificado = self::getCertifcado($company->getCertificado());
-        $certificate = self::readPfxForNFePHP($certificado, $company->getSenha());
-
-        // Simula o que o NFePHP faz
-        $privateKeyStr = "{$certificate->privateKey}";
-        $publicKeyStr = "{$certificate->publicKey}";
-        $certificateStr = "{$certificate}";
-
-        // Testa cada parte
-        $privKeyValid = openssl_pkey_get_private($privateKeyStr) !== false;
-        $pubKeyValid = openssl_x509_read($publicKeyStr) !== false;
-
-        // Simula o arquivo certfile que o NFePHP cria: privateKey + certificate
-        $certfile = $privateKeyStr . $certificateStr;
-        $certfileValid = openssl_pkey_get_private($certfile) !== false;
-
-        // Salva em arquivo temporário para testar exatamente como o cURL vai ler
-        $tempFile = tempnam(sys_get_temp_dir(), 'cert_test') . '.pem';
-        file_put_contents($tempFile, $certfile);
-        $fileContent = file_get_contents($tempFile);
-        $fileValid = openssl_pkey_get_private($fileContent) !== false;
-        @unlink($tempFile);
-
-        http_response_code(200);
-        echo json_encode([
-          "privateKey_length" => strlen($privateKeyStr),
-          "privateKey_valid" => $privKeyValid,
-          "privateKey_start" => substr($privateKeyStr, 0, 50),
-          "privateKey_end" => substr($privateKeyStr, -50),
-          "publicKey_length" => strlen($publicKeyStr),
-          "publicKey_valid" => $pubKeyValid,
-          "publicKey_start" => substr($publicKeyStr, 0, 50),
-          "publicKey_end" => substr($publicKeyStr, -50),
-          "certificate_length" => strlen($certificateStr),
-          "certificate_start" => substr($certificateStr, 0, 50),
-          "certfile_length" => strlen($certfile),
-          "certfile_valid" => $certfileValid,
-          "file_read_valid" => $fileValid,
-          "file_equals_string" => $fileContent === $certfile
-        ]);
-      } catch (\Exception $e) {
-        http_response_code(500);
-        echo json_encode(["error" => $e->getMessage()]);
-      }
-    } else {
-      http_response_code(404);
-      echo json_encode(["message" => "Empresa não encontrada"]);
-    }
+    return trim(str_replace(["\r\n", "\r"], "\n", $pem)) . "\n";
   }
 
   public static function testCertificate($cnpj)
   {
-    $companyModel = new CompanyModel();
-    $company = $companyModel->find([
-      "cnpj" => $cnpj
-    ]);
+    try {
+      $companies = (new CompanyModel())->find([
+        'cnpj' => self::soNumero($cnpj),
+      ], 1);
 
-    if ($company) {
-      $company = new CompanyModel($company[0]['id']);
-
-      $folderPath = "app/storage/certificados";
-      $certificadoPath = $folderPath . "/" . $company->getCertificado();
-
-      $certs = self::openCertificate($certificadoPath, $company->getSenha(), true);
-
-      if ($certs) {
-        $data = openssl_x509_parse($certs['cert']);
-        $data = json_encode($data);
-        $data = json_decode($data);
-
-        list($nome, $documento) = explode(":", $data->subject->CN);
-
-        $dt_emissao    = date('Y-m-d', $data->validFrom_time_t);
-        $dt_vencimento = date('Y-m-d', $data->validTo_time_t);
-
-        $result = [
-          "emissao" => $dt_emissao,
-          "dt_vencimento" => $dt_vencimento,
-          "nome" => $nome,
-          "documento" => $documento
-        ];
-
-        http_response_code(200); // OK
-        echo json_encode($result);
-      } else {
-        http_response_code(500); // Not Found
-        while ($msg = openssl_error_string()) {
-          echo $msg . "\n";
-        }
+      if ($companies === []) {
+        JsonResponse::error('Empresa não encontrada.', 404);
+        return;
       }
-    } else {
-      http_response_code(404); // Not Found
-      echo json_encode(["message" => "Empresa não encontrada"]);
+
+      $company = new CompanyModel($companies[0]['id']);
+      $certificateContent = self::getCertificado($company->getCertificado());
+      $certificate = self::openCertificate($certificateContent, $company->getSenha());
+      if (!$certificate) {
+        JsonResponse::error('Certificado ou senha inválidos.', 422);
+        return;
+      }
+
+      $data = openssl_x509_parse($certificate['cert']);
+      if ($data === false) {
+        JsonResponse::error('Não foi possível ler os dados do certificado.', 422);
+        return;
+      }
+
+      $commonName = (string) ($data['subject']['CN'] ?? '');
+      $parts = explode(':', $commonName);
+      $document = self::soNumero((string) (end($parts) ?: ''));
+      $name = count($parts) > 1 ? implode(':', array_slice($parts, 0, -1)) : $commonName;
+
+      JsonResponse::send([
+        'emissao' => date('Y-m-d', (int) ($data['validFrom_time_t'] ?? 0)),
+        'dt_vencimento' => date('Y-m-d', (int) ($data['validTo_time_t'] ?? 0)),
+        'nome' => $name,
+        'documento' => $document,
+      ]);
+    } catch (\Throwable $exception) {
+      error_log($exception->getMessage());
+      JsonResponse::error('Erro interno ao testar o certificado.', 500);
     }
   }
 
   public static function uploadXml($xml, $chave)
   {
-    $folderPath = "app/storage/fiscal/xml";
-    $fileName = "xml_" . $chave . ".xml";
-
-    if (!file_exists($folderPath)) {
-      mkdir($folderPath, 0777, true);
-    }
-
-    file_put_contents($folderPath . "/" . $fileName, $xml);
+    $folderPath = dirname(__DIR__, 2) . "/app/storage/fiscal/xml";
+    $fileName = 'xml_' . self::safeFileToken($chave) . '.xml';
+    self::writeFile($folderPath, $fileName, $xml);
 
     return $fileName;
   }
 
   public static function uploadXmlPreview($xml, $chave)
   {
-    $folderPath = "app/storage/fiscal/xml/preview";
-    $fileName = "xml_" . $chave . ".xml";
-
-    if (!file_exists($folderPath)) {
-      mkdir($folderPath, 0777, true);
-    }
-
-    file_put_contents($folderPath . "/" . $fileName, $xml);
+    $folderPath = dirname(__DIR__, 2) . "/app/storage/fiscal/xml/preview";
+    $fileName = 'xml_' . self::safeFileToken($chave) . '.xml';
+    self::writeFile($folderPath, $fileName, $xml);
 
     return $fileName;
   }
 
   public static function uploadPdf($pdf, $chave)
   {
-    $folderPath = "app/storage/fiscal/pdf";
-    $fileName = "pdf_" . $chave . ".pdf";
+    $relativeFolder = "app/storage/fiscal/pdf";
+    $folderPath = dirname(__DIR__, 2) . "/{$relativeFolder}";
+    $fileName = 'pdf_' . self::safeFileToken($chave) . '.pdf';
+    self::writeFile($folderPath, $fileName, $pdf);
 
-    if (!file_exists($folderPath)) {
-      mkdir($folderPath, 0777, true);
-    }
-
-    file_put_contents($folderPath . "/" . $fileName, $pdf);
-
-    return $folderPath . "/" . $fileName;
+    return $relativeFolder . "/" . $fileName;
   }
 
   public static function uploadPdfPreview($pdf, $chave)
   {
-    $folderPath = "app/storage/fiscal/pdf/preview";
-    $fileName = "pdf_" . $chave . ".pdf";
+    $relativeFolder = "app/storage/fiscal/pdf/preview";
+    $folderPath = dirname(__DIR__, 2) . "/{$relativeFolder}";
+    $fileName = 'pdf_' . self::safeFileToken($chave) . '.pdf';
+    self::writeFile($folderPath, $fileName, $pdf);
 
-    if (!file_exists($folderPath)) {
-      mkdir($folderPath, 0777, true);
+    return $relativeFolder . "/" . $fileName;
+  }
+
+  private static function safeFileToken($value): string
+  {
+    $token = preg_replace('/[^A-Za-z0-9_-]/', '', (string) $value);
+    if ($token === '') {
+      throw new \InvalidArgumentException('Identificador de arquivo inválido.');
     }
 
-    file_put_contents($folderPath . "/" . $fileName, $pdf);
+    return $token;
+  }
 
-    return $folderPath . "/" . $fileName;
+  private static function writeFile(string $folderPath, string $fileName, string $content): void
+  {
+    if (!is_dir($folderPath) && !mkdir($folderPath, 0770, true) && !is_dir($folderPath)) {
+      throw new \RuntimeException('Não foi possível criar a pasta de armazenamento fiscal.');
+    }
+
+    if (file_put_contents("{$folderPath}/{$fileName}", $content, LOCK_EX) === false) {
+      throw new \RuntimeException('Não foi possível salvar o arquivo fiscal.');
+    }
   }
 
   function gerarCpfValido()
@@ -413,7 +426,7 @@ CONF;
 
   public static function validaCST($cst)
   {
-    $cst = str_pad($cst, 3, '0', STR_PAD_LEFT);
+    $cst = str_pad((string) $cst, 2, '0', STR_PAD_LEFT);
     $validCSTs = [
       '01',
       '02',

@@ -7,6 +7,14 @@
             "App\\": "app/"
         }
     },
+    "scripts": {
+        "lint": "php scripts/lint.php",
+        "test": "php tests/run.php",
+        "check": [
+            "@lint",
+            "@test"
+        ]
+    },
     "authors": [
         {
             "name": "Matheus Souza",
@@ -14,6 +22,7 @@
         }
     ],
     "require": {
+        "php": "^8.1",
         "bramus/router": "^1.6",
         "vlucas/phpdotenv": "^5.6",
         "nfephp-org/sped-nfe": "dev-master",

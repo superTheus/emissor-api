@@ -2,10 +2,13 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\FindsByFilters;
 use stdClass;
 
 class CestModel extends Connection
 {
+  use FindsByFilters;
+
   private $conn;
   private $cest_id;
   private $ncm_id;
@@ -32,10 +35,13 @@ class CestModel extends Connection
       $stmt->execute();
 
       $cest = $stmt->fetch(\PDO::FETCH_ASSOC);
+      if (!$cest) {
+        throw new \RuntimeException('CEST não encontrado.');
+      }
       $this->setNcm_id($cest['ncm_id']);
       $this->setDescricao($cest['descricao']);
     } catch (\PDOException $e) {
-      echo $e->getMessage();
+      throw new \RuntimeException('Erro ao carregar o CEST.', 0, $e);
     }
   }
 
@@ -51,38 +57,12 @@ class CestModel extends Connection
 
   public function find($filter = [], $limit = null)
   {
-    $sql = "SELECT * FROM {$this->table}";
+    return $this->findByFilters($filter, $limit);
+  }
 
-    if (!empty($filter)) {
-      $sql .= " WHERE ";
-      $sql .= implode(" AND ", array_map(function ($column) {
-        return "$column = :$column";
-      }, array_keys($filter)));
-    }
-
-    if ($limit !== null) {
-      $sql .= " LIMIT :limit";
-    }
-
-    try {
-      $stmt = $this->conn->prepare($sql);
-
-      if (!empty($filter)) {
-        foreach ($filter as $column => $value) {
-          $stmt->bindValue(":$column", $value);
-        }
-      }
-
-      if ($limit !== null) {
-        $stmt->bindValue(':limit', (int) $limit, \PDO::PARAM_INT);
-      }
-
-      $stmt->execute();
-
-      return $stmt->fetchAll(\PDO::FETCH_ASSOC);
-    } catch (\PDOException $e) {
-      echo $e->getMessage();
-    }
+  protected function filterableColumns(): array
+  {
+    return ['cest_id', 'ncm_id', 'descricao'];
   }
 
 
