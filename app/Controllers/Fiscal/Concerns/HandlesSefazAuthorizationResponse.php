@@ -43,7 +43,8 @@ trait HandlesSefazAuthorizationResponse
           'codigo' => $status,
           'cStat' => $status,
           'error' => $reason,
-          'error_tags' => $this->sefazRejectionDetails($status, $reason),
+          // O xMotivo descreve a rejeição da SEFAZ; não é um erro de tag do XML.
+          'error_tags' => [],
           'etapa' => 'autorização da SEFAZ',
         ], 422);
         return;
@@ -70,9 +71,7 @@ trait HandlesSefazAuthorizationResponse
         'cStat' => 105,
         'recibo' => $this->receiptNumber,
         'error' => 'O lote continua em processamento na SEFAZ.',
-        'error_tags' => [
-          'Consulte novamente a situação usando o número do recibo informado.',
-        ],
+        'error_tags' => [],
         'etapa' => 'processamento da SEFAZ',
       ], 202);
       return;
@@ -108,21 +107,6 @@ trait HandlesSefazAuthorizationResponse
       $result = $protocol->infProt ?? $protocol;
       $this->analisaRetorno($result);
     }
-  }
-
-  protected function sefazRejectionDetails(int $status, string $reason): array
-  {
-    $detailsByStatus = [
-      280 => 'A SEFAZ considerou inválido o certificado usado na transmissão.',
-      281 => 'O certificado usado na transmissão está vencido ou ainda não é válido.',
-      282 => 'O certificado usado na transmissão não contém CNPJ ou CPF.',
-      283 => 'O autorizador da SEFAZ não aceitou a cadeia do certificado, mesmo que ela seja aceita em outro modelo ou ambiente.',
-      284 => 'O certificado usado na transmissão foi revogado.',
-      285 => 'A raiz do certificado usado na transmissão não foi reconhecida como ICP-Brasil.',
-      286 => 'A SEFAZ não conseguiu consultar a lista de certificados revogados da autoridade certificadora.',
-    ];
-
-    return [$detailsByStatus[$status] ?? sprintf('SEFAZ [%d]: %s', $status, $reason)];
   }
 
   abstract protected function processarEmissao($response);

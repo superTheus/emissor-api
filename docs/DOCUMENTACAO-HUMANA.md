@@ -1,6 +1,6 @@
 # Emissor API — documentação técnica e funcional
 
-> Versão para leitura humana. Análise estática do snapshot original `851af55`, realizada em 13/07/2026. Regras fiscais devem ser validadas por profissional fiscal antes de uso em produção.
+> Versão para leitura humana. Mapa-base do snapshot `851af55`, com contratos de certificado, emissão e eventos reconferidos no código vigente em 15/07/2026. Regras fiscais devem ser validadas por profissional fiscal antes de uso em produção.
 
 > **Atualização de legado:** após esta análise, o projeto foi refatorado. As correções e mudanças de contrato vigentes estão em [MELHORIAS-LEGADO.md](MELHORIAS-LEGADO.md). Quando houver divergência, o documento de melhorias prevalece; este arquivo mantém o mapa detalhado do código-base original.
 
@@ -16,7 +16,7 @@ Esta é uma API PHP para:
 - consultar emissões armazenadas;
 - testar certificados digitais.
 
-Não existe autenticação no código atual. O `index.php` libera CORS para qualquer origem (`*`) e todos os endpoints ficam públicos se o servidor web não aplicar proteção adicional.
+Existe autenticação opcional por `API_TOKEN`. Se a variável estiver vazia, as rotas permanecem públicas; quando configurada, aceitam `Authorization: Bearer <token>` ou `X-Auth-Token: <token>`. O `index.php` mantém CORS liberado para qualquer origem (`*`).
 
 ### Tecnologias
 
@@ -69,11 +69,13 @@ DB_NAME="emissor"
 DB_USER="usuario"
 DB_PASS="senha"
 URL_BASE="https://api.exemplo.com/"
+API_TOKEN="um-token-longo-e-aleatorio"
 ```
 
 - O document root deve apontar para a raiz que contém `index.php`.
 - O rewrite do servidor precisa encaminhar as rotas a `index.php`; o `.htaccess` existente atende Apache com `mod_rewrite`.
 - `URL_BASE` é concatenada ao caminho do PDF. Deve terminar com `/` se necessário para formar uma URL válida.
+- `API_TOKEN` vazio desabilita a autenticação. Em produção, configure um valor forte e envie-o como Bearer ou `X-Auth-Token`.
 - O processo PHP precisa escrever em `app/storage/certificados`, `app/storage/logos` e `app/storage/fiscal`.
 - O comando `openssl` precisa estar disponível no `PATH`; `UtilsController::openCertificate()` o executa com `proc_open`.
 - O timezone global é `America/Manaus`.
@@ -119,16 +121,16 @@ URL_BASE="https://api.exemplo.com/"
 | GET | `/fiscal/nfe/` | closure | texto `Emitir NFe` |
 | POST | `/fiscal/nfe/` | `FiscalController::createNfe(false)` | emite NF-e modelo 55 |
 | POST | `/fiscal/nfe/preview` | `FiscalController::createNfe(true)` | cria XML/DANFE sem assinar, transmitir, persistir ou consumir número |
-| POST | `/fiscal/nfe/cancel` | `FiscalController::cancelNfe` | cancela NF-e, cria PDF cancelado e registra evento |
-| POST | `/fiscal/nfe/carta` | `FiscalController::gerarCC` | envia CC-e, gera DACCE e registra evento |
+| POST | `/fiscal/nfe/cancel` | `FiscalController::cancelNfe` | contrato de cancelamento NF-e; atualmente bloqueado pela validação indevida de payload de emissão |
+| POST | `/fiscal/nfe/carta` | `FiscalController::gerarCC` | contrato de CC-e; atualmente bloqueado pela validação indevida de payload de emissão |
 | POST | `/fiscal/nfce/` | `CupomFiscalController::createNfe` | emite NFC-e modelo 65 |
-| POST | `/fiscal/nfce/cancel` | `CupomFiscalController::cancelNfce` | cancela NFC-e, sem persistir evento |
+| POST | `/fiscal/nfce/cancel` | `CupomFiscalController::cancelNfce` | cancela NFC-e e persiste XML/protocolo do evento, sem gerar PDF |
 | GET | `/fiscal/nfse/` | closure | texto `Emitir NFS-e` |
 | POST | `/fiscal/nfse/` | `NotaServicoController::emitir` | monta/assina DPS e envia à NFS-e Nacional |
 | POST | `/fiscal/emissoes` | `EmissoesController::find` | consulta `emissoes`; o body inteiro vira filtro |
 | GET | `/fiscal/certicate/` | closure | texto `Certificado` |
-| POST | `/fiscal/certicate/test` | `EmissoesController::verifyCertificate` | valida um PFX base64 recebido |
-| GET | `/fiscal/certicate/test/{cnpj}` | `UtilsController::testCertificate` | testa o certificado já salvo da empresa |
+| POST | `/fiscal/certicate/test` | `EmissoesController::verifyCertificate` | testa um PFX/P12 Base64 sem cadastrar a empresa ou salvar o arquivo |
+| GET | `/fiscal/certicate/test/{cnpj}` | `UtilsController::testCertificate` | lê o PFX e a senha já salvos no cadastro da empresa |
 
 > A palavra `certicate` está grafada assim no código e faz parte da URL pública.
 
@@ -291,9 +293,28 @@ A alteração de banco obrigatória e exemplos isolados de substituição/remoç
 
 Esta alteração cadastra e disponibiliza a logo pela API. Ela ainda não injeta automaticamente a imagem nos PDFs de DANFE/DANFCE ou no documento de NFS-e.
 
-### Testar certificado recebido
+### Testar certificado digital
+
+Existem duas rotas, conforme a origem do certificado:
+
+| Situação | Rota | De onde vêm o certificado e a senha | Altera dados? |
+|---|---|---|---|
+| A empresa ainda não está cadastrada ou o PFX será apenas conferido | `POST /fiscal/certicate/test` | Corpo JSON, com o PFX/P12 em Base64 e sua senha | Não salva o arquivo e não cria nem atualiza a empresa |
+| A empresa já está cadastrada | `GET /fiscal/certicate/test/{cnpj}` | Cadastro da empresa e arquivo em `app/storage/certificados` | Não |
+
+> `certicate` está grafado dessa forma no código e, por compatibilidade, faz parte das duas URLs.
+
+As duas verificações são locais. Elas tentam abrir o PFX e ler o certificado X.509, mas **não se comunicam com a SEFAZ**. Portanto, uma resposta `200` não garante que a cadeia será aceita no TLS da SEFAZ, não consulta revogação e não testa os webservices de autorização.
+
+Se `API_TOKEN` estiver preenchido no `.env`, inclua `Authorization: Bearer <token>` ou `X-Auth-Token: <token>` nas chamadas. Sem um token válido, a API responde `401` antes de executar o teste.
+
+#### Teste avulso: certificado Base64
 
 `POST /fiscal/certicate/test`
+
+Use esta rota antes de cadastrar uma empresa ou quando quiser conferir um arquivo PFX/P12 isoladamente. O campo `certificado` deve conter o arquivo binário completo convertido para Base64. São aceitos Base64 puro e Data URL.
+
+Exemplo com Data URL:
 
 ```json
 {
@@ -302,14 +323,93 @@ Esta alteração cadastra e disponibiliza a logo pela API. Ela ainda não injeta
 }
 ```
 
-Sucesso:
+Exemplo equivalente com Base64 puro:
+
+```json
+{
+  "certificado": "MII...",
+  "senha": "senha-do-pfx"
+}
+```
+
+```bash
+curl -X POST "$BASE_URL/fiscal/certicate/test" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -d '{"certificado":"MII...","senha":"senha-do-pfx"}'
+```
+
+Processamento:
+
+1. exige `certificado` e `senha` no JSON;
+2. remove o prefixo da Data URL, quando presente;
+3. decodifica o Base64 estritamente;
+4. abre o PFX com a senha, inclusive pelo fallback para algoritmos OpenSSL legacy;
+5. interpreta o certificado X.509;
+6. rejeita certificado expirado ou que ainda não entrou em vigor;
+7. extrai o nome e o documento do campo `subject.CN` e os devolve no JSON.
+
+Resposta `200`:
 
 ```json
 {
   "empresa": "EMPRESA TESTE LTDA",
-  "cnpj": "12345678000190"
+  "cnpj": "12345678000190",
+  "valido_de": "2026-01-01T00:00:00-04:00",
+  "valido_ate": "2027-01-01T00:00:00-04:00"
 }
 ```
+
+O CNPJ acima é apenas extraído do certificado. Como a rota é avulsa, não existe um CNPJ informado separadamente para comparação.
+
+Possíveis respostas de erro:
+
+| HTTP | Quando ocorre | Exemplo de `error` |
+|---:|---|---|
+| `400` | JSON inválido ou corpo JSON que não seja um objeto | `JSON inválido: ...` |
+| `422` | corpo vazio, campos ausentes, Base64 inválido, senha incorreta, PFX inválido, falha ao interpretar ou certificado fora da validade | `Senha incorreta ou certificado inválido.` |
+| `500` | falha interna inesperada durante a validação | `Erro interno ao validar o certificado.` |
+
+#### Teste do certificado de uma empresa cadastrada
+
+`GET /fiscal/certicate/test/{cnpj}`
+
+Use esta rota quando a empresa já existir no banco. Informe o CNPJ no caminho com os 14 dígitos e sem pontuação; a barra de um CNPJ formatado seria interpretada como separador da URL. A rota não recebe body nem senha: ela procura a empresa, obtém o nome do PFX e a senha já armazenados e abre o arquivo salvo.
+
+```bash
+curl "$BASE_URL/fiscal/certicate/test/12345678000190" \
+  -H "Authorization: Bearer $API_TOKEN"
+```
+
+Processamento:
+
+1. remove a pontuação do CNPJ recebido;
+2. procura a empresa pelo CNPJ;
+3. lê o arquivo PFX associado ao cadastro;
+4. abre o PFX com a senha armazenada;
+5. interpreta o certificado X.509;
+6. devolve nome, documento e datas encontradas no certificado.
+
+Resposta `200`:
+
+```json
+{
+  "emissao": "2026-01-01",
+  "dt_vencimento": "2027-01-01",
+  "nome": "EMPRESA TESTE LTDA",
+  "documento": "12345678000190"
+}
+```
+
+Nesta rota, `documento` é extraído do `subject.CN`. A implementação atual exibe as datas, mas não rejeita um certificado vencido e não compara novamente `documento` com o CNPJ usado na URL. Essas validações já são feitas durante o cadastro/substituição normal do certificado, mas não são repetidas por esta consulta.
+
+Possíveis respostas de erro:
+
+| HTTP | Quando ocorre | Exemplo de `error` |
+|---:|---|---|
+| `404` | nenhuma empresa foi encontrada para o CNPJ | `Empresa não encontrada.` |
+| `422` | o PFX ou a senha salvos são inválidos, ou os dados X.509 não podem ser interpretados | `Certificado ou senha inválidos.` |
+| `500` | arquivo não encontrado/não legível ou outra falha interna | `Erro interno ao testar o certificado.` |
 
 ## 7. NF-e — emissão de nota de produto
 
@@ -503,12 +603,14 @@ O ICMS monofásico/ST de combustível está fixado no código com bases e valore
 3. Monta chave e XML 4.00.
 4. Gera ide, emitente, destinatário, itens, tributos, totais, transporte, pagamentos e responsáveis.
 5. Assina o XML e envia lote síncrono.
-6. Trata `100`, `103`, `104` e `105`; demais códigos retornam `403`.
+6. Trata `100`, `103`, `104` e `105`; demais códigos retornam HTTP `422` com o `cStat` da SEFAZ no corpo.
 7. Protocola XML, renderiza DANFE, grava XML/PDF, incrementa contador e insere `emissoes` com `tipo=NFE`.
 
 > Apesar de selecionar contingência, o código ainda chama `sefazEnviaLote`; ele não implementa o ciclo operacional completo de contingência/offline.
 
 ### Resposta de sucesso
+
+NF-e e NFC-e usam o mesmo formato de resposta após a autorização. Na NF-e, por exemplo:
 
 ```json
 {
@@ -518,6 +620,18 @@ O ICMS monofásico/ST de combustível está fixado no código com bases e valore
   "link": "https://api.exemplo.com/app/storage/fiscal/pdf/pdf_...pdf",
   "xml": "<nfeProc>...</nfeProc>",
   "pdf": "JVBERi0xLjQK..."
+}
+```
+
+Uma rejeição da SEFAZ também segue o mesmo formato nos dois modelos. O status HTTP é `422`; `codigo` e `cStat` identificam a rejeição fiscal retornada pela SEFAZ:
+
+```json
+{
+  "codigo": 204,
+  "cStat": 204,
+  "error": "Rejeição: Duplicidade de NF-e [nRec: 310000133336764]",
+  "error_tags": [],
+  "etapa": "autorização da SEFAZ"
 }
 ```
 
@@ -533,9 +647,39 @@ O ICMS monofásico/ST de combustível está fixado no código com bases e valore
 
 O construtor ainda testa a SEFAZ antes do preview, podendo mudar o modo de emissão e gerar aviso.
 
-### Cancelamento de NF-e
+### Eventos fiscais da NF-e
+
+As rotas abaixo transmitem eventos reais à SEFAZ no ambiente definido em `empresa.tpamb`. Não use uma NF-e de produção apenas para testar a integração. Uma resposta HTTP de erro depois da transmissão também não prova que o evento fiscal falhou: a SEFAZ pode ter registrado o evento e a falha ter ocorrido depois, durante a geração do PDF ou a persistência local.
+
+Fontes oficiais conferidas em **15/07/2026**:
+
+- [MOC 7.0 — NF-e/NFC-e](https://www.nfe.fazenda.gov.br/portal/listaConteudo.aspx?tipoConteudo=ndIjl+iEFdE%3D), leiaute de eventos versão `1.00`;
+- [Ajuste SINIEF 07/2005](https://www.confaz.fazenda.gov.br/legislacao/ajustes/2005/AJ007_05), texto consolidado, cláusulas décima segunda a décima quarta-A;
+- [NT 2011.003 — Carta de Correção Eletrônica](https://www.nfe.fazenda.gov.br/Portal/exibirArquivo.aspx?conteudo=hNJXbmu+l8Q%3D).
+
+Não há cálculos tributários nem totalizadores nesses eventos. O XML autorizado da NF-e não é refeito: cancelamento altera a situação fiscal do documento; CC-e registra uma correção vinculada, sem modificar o XML original.
+
+> **Bloqueio atual das duas rotas de evento da NF-e:** `FiscalController` instancia o controller CRT com o payload do evento, mas `BaseFiscalController` o valida como se fosse uma emissão completa. Assim, o payload correto mostrado abaixo pode receber HTTP `422`, pedindo `cfop`, `cliente`, `produtos`, `total` e `pagamentos`, antes de chegar a `cancelNfe()` ou `gerarCC()`. Isso é um defeito de despacho da implementação atual. Não envie dados fictícios de emissão como contorno; o dispatcher deve ser corrigido para inicializar eventos sem executar `validateEmissionData()`.
+
+#### Cancelamento de NF-e
 
 `POST /fiscal/nfe/cancel`
+
+O cancelamento normal exige uma NF-e previamente autorizada, sem circulação da mercadoria, prestação de serviço ou vinculação à Duplicata Escritural, e deve ser solicitado em até 24 horas da Autorização de Uso. A UF pode disciplinar cancelamento extemporâneo excepcional. A cláusula décima segunda-A do Ajuste SINIEF 07/2005 prevê uma hipótese especial de 168 horas com efeitos a partir de **03/08/2026**; esta API não implementa um fluxo específico para essa hipótese.
+
+Pré-requisitos da API:
+
+- empresa cadastrada com CNPJ, CRT, ambiente, PFX e senha válidos;
+- emissão existente na tabela `emissoes`, localizada pela chave;
+- `emissoes.tipo` igual a `NFE`;
+- protocolo de autorização salvo na emissão;
+- justificativa entre 15 e 255 caracteres conforme o leiaute do evento. O código valida apenas o mínimo de 15; o limite de 255 fica para o schema/SEFAZ.
+
+| Campo | Tipo | Regra |
+|---|---|---|
+| `cnpj` | string | CNPJ da empresa emitente; a busca remove pontuação |
+| `chave` | string | chave de acesso de 44 dígitos de uma NF-e salva localmente |
+| `justificativa` | string | motivo claro do cancelamento; mínimo local de 15 e máximo técnico de 255 caracteres |
 
 ```json
 {
@@ -545,11 +689,94 @@ O construtor ainda testa a SEFAZ antes do preview, podendo mudar o modo de emiss
 }
 ```
 
-Valida CNPJ, chave e justificativa mínima de 15 caracteres. A emissão precisa existir localmente para fornecer XML e protocolo. Em `cStat 128` ou `135`, protocola o evento, marca o DANFE como cancelado, grava PDF e insere `emissoes_eventos` com `tipo=CANCELAMENTO`.
+```bash
+curl -X POST "$BASE_URL/fiscal/nfe/cancel" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -d '{"cnpj":"12345678000190","chave":"13260712345678000190550010000001231123456780","justificativa":"Cancelamento solicitado por erro no pedido"}'
+```
 
-### Carta de correção
+Fluxo implementado depois que o controller de evento é alcançado:
+
+1. valida os três campos e o mínimo de 15 caracteres;
+2. carrega empresa, ambiente e certificado;
+3. procura a chave em `emissoes` e exige `tipo=NFE`;
+4. usa o protocolo salvo e chama `Tools::sefazCancela()`;
+5. protocola o XML do evento com `Complements::toAuthorize()`;
+6. renderiza um DANFE da NF-e original com marca visual de cancelamento;
+7. grava o PDF e insere `emissoes_eventos` com `tipo=CANCELAMENTO`, XML e protocolo do evento;
+8. retorna o XML original da NF-e e o PDF marcado. A linha original de `emissoes` não recebe um status de cancelada.
+
+Tags principais geradas pelo NFePHP no XML de evento:
+
+| Tag | Conteúdo |
+|---|---|
+| `envEvento@versao` | `1.00` |
+| `infEvento/Id` | `ID` + `110111` + chave + sequência |
+| `cOrgao`, `tpAmb`, `CNPJ`, `chNFe`, `dhEvento` | órgão/UF, ambiente, autor, chave e data/hora do evento |
+| `tpEvento` | `110111` — cancelamento |
+| `nSeqEvento` | normalmente `1` para cancelamento |
+| `detEvento/descEvento` | `Cancelamento` |
+| `detEvento/nProt` | protocolo de Autorização de Uso da NF-e salvo localmente |
+| `detEvento/xJust` | valor recebido em `justificativa` |
+| `Signature` | assinatura do `infEvento` com o certificado digital |
+
+Resposta HTTP `200` implementada:
+
+```json
+{
+  "chave": "13260712345678000190550010000001231123456780",
+  "avisos": [],
+  "protocolo": "113260000000002",
+  "link": "https://api.exemplo.com/app/storage/fiscal/pdf/pdf_13260712345678000190550010000001231123456780.pdf",
+  "xml": "<nfeProc>...XML ORIGINAL DA NF-e...</nfeProc>",
+  "pdf": "JVBERi0xLjQK..."
+}
+```
+
+O campo `xml` da resposta acima é o XML original da NF-e. O XML protocolado do cancelamento é salvo em `emissoes_eventos`, mas não é devolvido por esta rota.
+
+Respostas de erro da API:
+
+| HTTP | Situação | Formato principal |
+|---:|---|---|
+| `400` | body ausente/JSON inválido | `{"error":"Dados não fornecidos."}` ou erro de JSON |
+| `401` | `API_TOKEN` configurado e credencial ausente/incorreta | `{"error":"Não autorizado."}` |
+| `404` | empresa ou emissão não encontrada | `{"error":"Empresa não encontrada."}` ou `{"error":"Emissão não encontrada."}` |
+| `422` | campo ausente, justificativa curta, tipo diferente de `NFE`, bloqueio atual do validador de emissão ou rejeição da SEFAZ | erro local ou `{"status":"error","message":"Erro ao cancelar: ..."}` |
+| `500` | certificado, comunicação, protocolo, PDF ou persistência falhou | `{"error":"Erro interno ao cancelar a NF-e."}` |
+
+Rejeições SEFAZ que merecem tratamento do cliente incluem `215` (schema), `217/580` (documento inexistente ou evento exige documento autorizado), `220/501` (prazo superior ao permitido, conforme regra/serviço do autorizador), `222` (protocolo divergente), `573` (evento duplicado), `574` (autor divergente) e `577`, `578` ou `579` (data/hora inválida). A API atual não devolve o `cStat` separadamente no erro de cancelamento; ele aparece apenas indiretamente quando fizer parte de `xMotivo`.
+
+#### Carta de Correção Eletrônica — CC-e
 
 `POST /fiscal/nfe/carta`
+
+A rota existe somente para NF-e modelo 55. O Ajuste SINIEF 19/2016 não prevê CC-e entre os eventos da NFC-e modelo 65, e esta API não registra `/fiscal/nfce/carta`.
+
+A CC-e não pode corrigir:
+
+- base de cálculo, alíquota, diferença de preço, quantidade, valor da operação/prestação ou outras variáveis que determinem o imposto;
+- dados cadastrais cuja mudança altere o remetente ou o destinatário;
+- data de emissão ou de saída;
+- campos de exportação informados na DU-E;
+- inclusão ou alteração de parcelas de venda a prazo.
+
+O protocolo da SEFAZ registra o evento, mas não valida se o texto respeita essas limitações. Essa responsabilidade continua sendo do emitente. Se houver mais de uma CC-e, a última deve consolidar todas as correções anteriores. A API incrementa a sequência, mas não recupera nem concatena os textos anteriores; envie o conteúdo já consolidado no campo `carta`.
+
+Pré-requisitos da API:
+
+- empresa e NF-e original salvas localmente;
+- `emissoes.tipo` igual a `NFE`;
+- NF-e autorizada, não cancelada nem denegada;
+- texto de 15 a 1000 caracteres conforme o leiaute. O código valida apenas o mínimo de 15;
+- no máximo 20 sequências de CC-e segundo a regra técnica; o código não antecipa esse limite.
+
+| Campo | Tipo | Regra |
+|---|---|---|
+| `cnpj` | string | CNPJ da empresa emitente |
+| `chave` | string | chave de 44 dígitos de uma NF-e salva em `emissoes` |
+| `carta` | string | correção consolidada; mínimo local/técnico de 15 e máximo técnico de 1000 caracteres |
 
 ```json
 {
@@ -559,7 +786,78 @@ Valida CNPJ, chave e justificativa mínima de 15 caracteres. A emissão precisa 
 }
 ```
 
-Aceita `cStat 128`, `135` ou `136`, incrementa `emissoes.sequencia_cc`, gera DACCE e insere evento `CC`. A rota não valida previamente presença/tamanho de `chave` e `carta`.
+```bash
+curl -X POST "$BASE_URL/fiscal/nfe/carta" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -d '{"cnpj":"12345678000190","chave":"13260712345678000190550010000001231123456780","carta":"Corrige-se o peso bruto para 1,40 kg, permanecendo inalterados os demais dados."}'
+```
+
+Fluxo implementado depois que o controller de evento é alcançado:
+
+1. valida campos e mínimo de 15 caracteres;
+2. carrega empresa/certificado e exige uma emissão local `NFE`;
+3. calcula `nSeqEvento = emissoes.sequencia_cc + 1`;
+4. chama `Tools::sefazCCe()` e protocola o XML;
+5. atualiza `emissoes.sequencia_cc`;
+6. gera o DACCE, grava o PDF e insere `emissoes_eventos` com `tipo=CC`;
+7. se apenas o PDF falhar, retorna HTTP `200` com aviso, XML protocolado e campos de arquivo vazios. Nesse caso a sequência já foi atualizada, mas o evento não é inserido em `emissoes_eventos`, pois a persistência está no mesmo bloco do PDF.
+
+Tags principais do evento:
+
+| Tag | Conteúdo |
+|---|---|
+| `envEvento@versao` | `1.00` |
+| `infEvento/Id` | `ID` + `110110` + chave + sequência |
+| `cOrgao`, `tpAmb`, `CNPJ`, `chNFe`, `dhEvento` | órgão/UF, ambiente, autor, chave e data/hora |
+| `tpEvento` | `110110` — Carta de Correção |
+| `nSeqEvento` | sequência local de `1` a `20` |
+| `detEvento/descEvento` | `Carta de Correção` |
+| `detEvento/xCorrecao` | valor recebido em `carta`, de 15 a 1000 caracteres |
+| `detEvento/xCondUso` | condições de uso exigidas pelo leiaute/NFePHP |
+| `Signature` | assinatura do `infEvento` com o certificado digital |
+
+Resposta HTTP `200` com DACCE:
+
+```json
+{
+  "chave": "13260712345678000190550010000001231123456780",
+  "avisos": [],
+  "protocolo": "113260000000003",
+  "sequencia": 1,
+  "link": "https://api.exemplo.com/app/storage/fiscal/pdf/pdf_cce_13260712345678000190550010000001231123456780_seq1.pdf",
+  "xml": "<procEventoNFe>...CC-e PROTOCOLADA...</procEventoNFe>",
+  "pdf": "JVBERi0xLjQK..."
+}
+```
+
+Resposta `200` se o evento foi transmitido, mas o DACCE falhou:
+
+```json
+{
+  "chave": "13260712345678000190550010000001231123456780",
+  "avisos": ["Erro ao gerar PDF: ..."],
+  "protocolo": "113260000000003",
+  "sequencia": 1,
+  "link": "",
+  "xml": "<procEventoNFe>...CC-e PROTOCOLADA...</procEventoNFe>",
+  "pdf": ""
+}
+```
+
+Uma rejeição tratada diretamente retorna HTTP `422`:
+
+```json
+{
+  "error": "Erro ao processar CC-e",
+  "codigo": 594,
+  "motivo": "Rejeição: O número de sequência do evento informado é maior que o permitido"
+}
+```
+
+Além dos erros HTTP comuns do cancelamento, rejeições frequentes da CC-e incluem `501` (NF-e autorizada além do prazo técnico aplicável ao evento), `573` (duplicidade), `580` (NF-e não autorizada/cancelada), `594` (sequência acima do permitido) e rejeições genéricas de chave, autor, data/hora ou schema.
+
+O retorno externo possui um `cStat` do lote e outro em `retEvento/infEvento`. Tecnicamente, `128` significa apenas “lote de evento processado”; o resultado do evento deve ser lido no `cStat` interno (`135` significa registrado e vinculado; `136`, registrado sem vinculação). A implementação atual aceita `128`, `135` ou `136` no nível lido por `Standardize` sem validar explicitamente o `cStat` interno. Esse comportamento deve ser corrigido antes de tratar todo HTTP `200` como confirmação definitiva.
 
 ## 8. NFC-e — cupom fiscal
 
@@ -611,6 +909,35 @@ Fluxo:
 4. exige ao menos um pagamento;
 5. assina, envia, protocola, gera DANFCE 80 mm, salva e incrementa contador NFC-e.
 
+### Resposta de sucesso
+
+A NFC-e retorna o mesmo contrato da NF-e. Exemplo real de homologação, com o conteúdo extenso de `xml` e `pdf` abreviado:
+
+```json
+{
+  "chave": "31260717606607000112650360000000011020261003",
+  "avisos": [],
+  "protocolo": "131260000662453",
+  "link": "http://projetos.local/emissor-api/app/storage/fiscal/pdf/pdf_31260717606607000112650360000000011020261003.pdf",
+  "xml": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><nfeProc versao=\"4.00\">...</nfeProc>",
+  "pdf": "JVBERi0xLjMK..."
+}
+```
+
+### Resposta de rejeição
+
+O mesmo formato abaixo é utilizado para rejeições de NF-e e NFC-e. Neste exemplo, a API responde com HTTP `422`, enquanto `204` é o `cStat` da SEFAZ, não o status HTTP:
+
+```json
+{
+  "codigo": 204,
+  "cStat": 204,
+  "error": "Rejeição: Duplicidade de NF-e [nRec: 310000133336764]",
+  "error_tags": [],
+  "etapa": "autorização da SEFAZ"
+}
+```
+
 Pontos específicos da implementação:
 
 - o total `vNF` usa apenas a soma de `produto.total`, sem incorporar frete, desconto ou acréscimo nas totalizações finais;
@@ -623,6 +950,25 @@ Pontos específicos da implementação:
 
 `POST /fiscal/nfce/cancel`
 
+Pela regra nacional vigente, a NFC-e pode ser cancelada em até 30 minutos da Autorização de Uso, desde que não tenha ocorrido a saída/circulação da mercadoria; a UF pode reduzir esse prazo. No Amazonas, a [Resolução nº 0018/2022-GSEFAZ](https://online.sefaz.am.gov.br/doe/toPdf.asp?idPublicacao=1502) confirma os 30 minutos e admite solicitação extemporânea em até 90 dias somente nas hipóteses e pelo procedimento administrativo nela previstos.
+
+Fonte nacional conferida em **15/07/2026**: [Ajuste SINIEF 19/2016](https://www.confaz.fazenda.gov.br/legislacao/ajustes/2016/AJ_019_16), texto consolidado, cláusulas décima terceira e décima quinta; MOC 7.0, leiaute de evento `1.00`.
+
+Esta rota executa somente o evento eletrônico normal via `Tools::sefazCancela()`. Ela não solicita liberação extemporânea, não gera DAR/taxa e não executa o procedimento administrativo exigido pela SEFAZ/AM. Se os 30 minutos já passaram, regularize primeiro a situação conforme a legislação e os serviços da UF.
+
+Pré-requisitos:
+
+- empresa cadastrada com certificado e ambiente corretos;
+- NFC-e existente localmente em `emissoes`, com `tipo=NFCE` e protocolo de autorização;
+- evento enviado ao mesmo ambiente e autorizador da NFC-e original;
+- justificativa entre 15 e 255 caracteres. O código valida apenas o mínimo.
+
+| Campo | Tipo | Regra |
+|---|---|---|
+| `cnpj` | string | CNPJ da empresa emitente |
+| `chave` | string | chave de acesso de 44 dígitos de uma NFC-e salva localmente |
+| `justificativa` | string | mínimo local/técnico de 15 e máximo técnico de 255 caracteres |
+
 ```json
 {
   "cnpj": "12.345.678/0001-90",
@@ -631,13 +977,49 @@ Pontos específicos da implementação:
 }
 ```
 
-Em `128` ou `135`, retorna apenas:
-
-```json
-{"status":"success","message":"Cancelamento homologado com sucesso!"}
+```bash
+curl -X POST "$BASE_URL/fiscal/nfce/cancel" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -d '{"cnpj":"12345678000190","chave":"13260712345678000190650010000001231123456780","justificativa":"Cancelamento por erro de lançamento"}'
 ```
 
-Não protocola/salva XML do evento, não gera PDF cancelado e não insere `emissoes_eventos`. Também não valida presença ou tamanho da justificativa antes de acessar os campos.
+Fluxo implementado:
+
+1. valida os campos e o mínimo de 15 caracteres;
+2. carrega empresa, ambiente, PFX e senha;
+3. procura a emissão pela chave e exige `tipo=NFCE`;
+4. transmite o evento de cancelamento usando o protocolo salvo;
+5. protocola o XML do evento;
+6. insere `emissoes_eventos` com `tipo=CANCELAMENTO`, protocolo, XML e `link` vazio;
+7. não gera PDF cancelado e não altera a linha original de `emissoes`.
+
+As tags são as mesmas descritas no cancelamento da NF-e (`tpEvento=110111`, `nProt` e `xJust`), mas `chNFe` contém uma chave modelo 65.
+
+Resposta HTTP `200` implementada:
+
+```json
+{
+  "status": "success",
+  "message": "Cancelamento homologado com sucesso!",
+  "protocolo": "113260000000004",
+  "xml": "<procEventoNFe>...CANCELAMENTO PROTOCOLADO...</procEventoNFe>"
+}
+```
+
+Respostas de erro:
+
+| HTTP | Situação | Formato principal |
+|---:|---|---|
+| `400` | JSON inválido | `{"error":"JSON inválido: ..."}` |
+| `401` | token obrigatório ausente/incorreto | `{"error":"Não autorizado."}` |
+| `404` | empresa ou emissão não encontrada | campo `error` |
+| `422` | campo ausente, justificativa curta, chave de outro modelo ou rejeição SEFAZ | erro local ou `{"status":"error","message":"Erro ao cancelar: ..."}` |
+| `500` | falha de certificado, comunicação, protocolo ou banco | `{"error":"Erro interno ao cancelar a NFC-e."}` |
+
+Possíveis rejeições incluem `215` (schema), `217/580` (documento inexistente ou não autorizado), `222` (protocolo divergente), `501` (prazo superior ao permitido), `573` (duplicidade), `574` (autor divergente) e `577`, `578` ou `579` (data/hora). No Amazonas, a SEFAZ também documenta `501` para cancelamento após o prazo normal.
+
+Assim como na NF-e, o código aceita `cStat 128` ou `135` no nível padronizado sem conferir explicitamente o `retEvento/infEvento/cStat`. Como `128` significa somente lote processado, confirme o protocolo/XML ou consulte a situação antes de considerar o cancelamento definitivo. Se a SEFAZ registrar o evento e a gravação em `emissoes_eventos` falhar, a API pode retornar `500` apesar de a NFC-e já estar fiscalmente cancelada.
 
 ## 9. NFS-e Nacional
 
@@ -797,7 +1179,7 @@ app/storage/fiscal/pdf/preview/pdf_<chave+uniqid>.pdf
 
 Prioridade crítica:
 
-1. Não há autenticação; CORS é `*`; empresas, XMLs, PDFs, senhas de PFX e CSCs podem ser consultados.
+1. A autenticação é opcional e vem desabilitada quando `API_TOKEN` está vazio; com CORS `*`, uma instalação sem token deixa os endpoints expostos.
 2. A rota de empresa devolve segredos e o JSON de erro da NFC-e pode devolver CSC.
 3. O contador NFS-e atualiza colunas de NF-e, causando repetição de DPS e corrupção da numeração NF-e.
 4. O ICMS de combustível usa valores fixos de exemplo.
@@ -819,9 +1201,10 @@ Prioridade média:
 2. `EmissoesEventosModel::__construct($chave)` define `chave`, mas `getById()` consulta por `id`, que não foi definido.
 3. `CompanyModel::getById()` não trata `fetch()` falso antes de acessar índices.
 4. `CompanyModel::create()` não inclui CNAE, IM e atividade.
-5. A CC-e não valida campos antes do uso; cancelamento NFC-e também não.
-6. O sucesso NFS-e exige `codigo` inteiro `201`; string `"201"` cai no erro.
-7. Não há testes automatizados, schema versionado, paginação, rate limit, logs estruturados ou contrato OpenAPI.
+5. As rotas de cancelamento/CC-e da NF-e passam pelo validador de emissão completa e podem rejeitar o payload correto antes de transmitir o evento.
+6. Cancelamento e CC-e aceitam `cStat 128` sem validar explicitamente o `retEvento.infEvento.cStat`; lote processado não significa, por si só, evento homologado.
+7. O sucesso NFS-e exige `codigo` inteiro `201`; string `"201"` cai no erro.
+8. Não há testes automatizados, schema versionado, paginação, rate limit, logs estruturados ou contrato OpenAPI.
 
 ## 13. Ordem recomendada para tornar o projeto seguro em produção
 

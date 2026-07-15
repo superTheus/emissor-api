@@ -379,17 +379,36 @@ $test('erro TLS da NFC-e explica recusa do certificado pela SEFAZ', static funct
     $assertSame(false, str_contains($joined, 'sslv3'));
 });
 
-$test('rejeição 283 da NFC-e explica o problema na cadeia do PFX', static function () use ($assertTrue): void {
-    $controller = (new ReflectionClass(CupomFiscalController::class))->newInstanceWithoutConstructor();
-    $method = new ReflectionMethod(CupomFiscalController::class, 'sefazRejectionDetails');
-    $method->setAccessible(true);
-    $details = $method->invoke(
-        $controller,
-        283,
-        'Rejeicao: Certificado Transmissor - erro Cadeia de Certificacao'
-    );
+$test('rejeição da SEFAZ não é duplicada em error_tags', static function () use ($assertSame): void {
+    $controller = new class extends CRT1Controller {
+        public function __construct()
+        {
+        }
 
-    $assertTrue(str_contains(implode(' ', $details), 'outro modelo ou ambiente'));
+        public function analyze(object $response): void
+        {
+            $this->analisaRetorno($response);
+        }
+    };
+
+    // A suíte já escreveu resultados no STDOUT quando este teste roda; em CLI,
+    // isso faria header() emitir um warning antes do JSON capturado.
+    set_error_handler(static fn(): bool => true, E_WARNING);
+    ob_start();
+    try {
+        $controller->analyze((object) [
+            'cStat' => 204,
+            'xMotivo' => 'Rejeição: Duplicidade de NF-e [nRec: 310000133336764]',
+        ]);
+        $response = json_decode((string) ob_get_contents(), true, 512, JSON_THROW_ON_ERROR);
+    } finally {
+        ob_end_clean();
+        restore_error_handler();
+    }
+
+    $assertSame(204, $response['codigo']);
+    $assertSame('Rejeição: Duplicidade de NF-e [nRec: 310000133336764]', $response['error']);
+    $assertSame([], $response['error_tags']);
 });
 
 $test('lote síncrono com uma NF-e encaminha infProt com cStat', static function () use ($assertSame): void {
