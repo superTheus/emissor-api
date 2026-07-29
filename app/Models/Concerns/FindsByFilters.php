@@ -6,6 +6,11 @@ trait FindsByFilters
 {
   abstract protected function filterableColumns(): array;
 
+  protected function defaultOrderBy(): ?array
+  {
+    return null;
+  }
+
   protected function findByFilters($filters = [], $limit = null): array
   {
     if ($filters === null) {
@@ -34,6 +39,18 @@ trait FindsByFilters
         array_keys($filters)
       );
       $sql .= ' WHERE ' . implode(' AND ', $conditions);
+    }
+
+    $orderBy = $this->defaultOrderBy();
+    if ($orderBy !== null) {
+      [$column, $direction] = $orderBy;
+      $direction = strtoupper((string) $direction);
+
+      if (!in_array($column, $allowedColumns, true) || !in_array($direction, ['ASC', 'DESC'], true)) {
+        throw new \LogicException('Ordenação padrão inválida no Model.');
+      }
+
+      $sql .= " ORDER BY {$column} {$direction}";
     }
 
     if ($limit !== null) {

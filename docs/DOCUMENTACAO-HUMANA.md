@@ -1,6 +1,6 @@
 # Emissor API — documentação técnica e funcional
 
-> Versão para leitura humana. Mapa-base do snapshot `851af55`, com contratos de certificado, emissão e eventos reconferidos no código vigente em 15/07/2026. Regras fiscais devem ser validadas por profissional fiscal antes de uso em produção.
+> Versão para leitura humana. Mapa-base do snapshot `851af55`, com contratos de certificado, emissão e eventos reconferidos no código vigente em 15/07/2026. A consulta de eventos fiscais foi atualizada em 28/07/2026. Regras fiscais devem ser validadas por profissional fiscal antes de uso em produção.
 
 > **Atualização de legado:** após esta análise, o projeto foi refatorado. As correções e mudanças de contrato vigentes estão em [MELHORIAS-LEGADO.md](MELHORIAS-LEGADO.md). Quando houver divergência, o documento de melhorias prevalece; este arquivo mantém o mapa detalhado do código-base original.
 
@@ -13,7 +13,7 @@ Esta é uma API PHP para:
 - emitir, pré-visualizar, cancelar e gerar carta de correção de NF-e (modelo 55);
 - emitir e cancelar NFC-e (modelo 65);
 - emitir NFS-e pelo padrão nacional, a partir de uma DPS;
-- consultar emissões armazenadas;
+- consultar emissões e eventos fiscais armazenados;
 - testar certificados digitais.
 
 Existe autenticação opcional por `API_TOKEN`. Se a variável estiver vazia, as rotas permanecem públicas; quando configurada, aceitam `Authorization: Bearer <token>` ou `X-Auth-Token: <token>`. O `index.php` mantém CORS liberado para qualquer origem (`*`).
@@ -99,7 +99,7 @@ API_TOKEN="um-token-longo-e-aleatorio"
 - Há respostas que são texto simples apesar do header global `application/json` (`Home`, `Empresa`, erros de estado/município e 404 de rota).
 - O preflight `OPTIONS` sempre retorna `200` antes do router.
 
-## 5. Catálogo completo das 35 rotas
+## 5. Catálogo completo das 36 rotas
 
 ### Rotas informativas e empresa
 
@@ -127,7 +127,8 @@ API_TOKEN="um-token-longo-e-aleatorio"
 | POST | `/fiscal/nfce/cancel` | `CupomFiscalController::cancelNfce` | cancela NFC-e e persiste XML/protocolo do evento, sem gerar PDF |
 | GET | `/fiscal/nfse/` | closure | texto `Emitir NFS-e` |
 | POST | `/fiscal/nfse/` | `NotaServicoController::emitir` | monta/assina DPS e envia à NFS-e Nacional |
-| POST | `/fiscal/emissoes` | `EmissoesController::find` | consulta `emissoes`; o body inteiro vira filtro |
+| POST | `/fiscal/emissoes` | `EmissoesController::find` | consulta notas em `emissoes`; aceita filtro direto ou envelope com `filter`/`limit` |
+| POST | `/fiscal/eventos` | `EmissoesEventosController::find` | consulta cancelamentos e CC-e em `emissoes_eventos`, incluindo XML e link público do PDF |
 | GET | `/fiscal/certicate/` | closure | texto `Certificado` |
 | POST | `/fiscal/certicate/test` | `EmissoesController::verifyCertificate` | testa um PFX/P12 Base64 sem cadastrar a empresa ou salvar o arquivo |
 | GET | `/fiscal/certicate/test/{cnpj}` | `UtilsController::testCertificate` | lê o PFX e a senha já salvos no cadastro da empresa |
@@ -859,6 +860,8 @@ Além dos erros HTTP comuns do cancelamento, rejeições frequentes da CC-e incl
 
 O retorno externo possui um `cStat` do lote e outro em `retEvento/infEvento`. Tecnicamente, `128` significa apenas “lote de evento processado”; o resultado do evento deve ser lido no `cStat` interno (`135` significa registrado e vinculado; `136`, registrado sem vinculação). A implementação atual aceita `128`, `135` ou `136` no nível lido por `Standardize` sem validar explicitamente o `cStat` interno. Esse comportamento deve ser corrigido antes de tratar todo HTTP `200` como confirmação definitiva.
 
+As CC-e persistidas podem ser recuperadas posteriormente por `POST /fiscal/eventos`, filtrando pela chave e por `tipo=CC`. A rota devolve o XML protocolado armazenado e a URL pública do DACCE; veja a seção 10.
+
 ## 8. NFC-e — cupom fiscal
 
 `POST /fiscal/nfce/`
@@ -1111,20 +1114,85 @@ Resposta:
 
 Inconsistência crítica do contador: a série e o número são lidos dos campos `serie_nfse*`/`numero_nfse*`, mas `atualizaNumero()` grava o incremento em `numero_nfe*`. Portanto, o contador NFS-e não avança e o contador NF-e é alterado. Corrija antes de emitir em produção.
 
-## 10. Consulta de emissões e persistência
+## 10. Consulta de emissões, eventos e persistência
 
 `POST /fiscal/emissoes`
 
-Nesta rota, o body já é o filtro; não use o envelope `filter`:
+Consulta os documentos originais salvos em `emissoes`. Aceita o envelope comum:
 
 ```json
 {
-  "empresa": "12.345.678/0001-90",
-  "tipo": "NFE"
+  "filter": {
+    "empresa": "12.345.678/0001-90",
+    "tipo": "NFE"
+  },
+  "limit": 10
 }
 ```
 
-O CNPJ do filtro `empresa` é normalizado. Não há `limit` acessível pela rota, porque o controller embrulha todo o body como filtro e não repassa um limite separado.
+Também aceita o filtro diretamente, sem `limit`:
+
+```json
+{"empresa":"12.345.678/0001-90","tipo":"NFE"}
+```
+
+O CNPJ do filtro `empresa` é normalizado. Os filtros permitidos são `chave`, `numero`, `serie`, `empresa`, `tipo` e `protocolo`.
+
+### Consulta de cancelamentos e Cartas de Correção
+
+`POST /fiscal/eventos`
+
+Consulta os registros de `emissoes_eventos`. Os filtros permitidos são:
+
+| Filtro | Uso |
+|---|---|
+| `id` | identificador local do evento |
+| `chave` | chave de acesso da NF-e/NFC-e |
+| `tipo` | `CC` para Carta de Correção ou `CANCELAMENTO` |
+| `protocolo` | protocolo retornado pela SEFAZ |
+
+Para recuperar todas as CC-e de uma NF-e:
+
+```json
+{
+  "filter": {
+    "chave": "13260712345678000190550010000001231123456780",
+    "tipo": "CC"
+  },
+  "limit": 20
+}
+```
+
+Exemplo com cURL:
+
+```bash
+curl -X POST "$BASE_URL/fiscal/eventos" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -d '{"filter":{"chave":"13260712345678000190550010000001231123456780","tipo":"CC"},"limit":20}'
+```
+
+Resposta HTTP `200`, ordenada do evento mais recente para o mais antigo:
+
+```json
+[
+  {
+    "id": 17,
+    "chave": "13260712345678000190550010000001231123456780",
+    "tipo": "CC",
+    "protocolo": "113260000000003",
+    "xml": "<procEventoNFe>...CC-e PROTOCOLADA...</procEventoNFe>",
+    "link": "https://api.exemplo.com/app/storage/fiscal/pdf/pdf_cce_13260712345678000190550010000001231123456780_seq1.pdf"
+  }
+]
+```
+
+- `xml` contém o XML protocolado do evento armazenado no banco; a CC-e não é salva como arquivo `.xml` separado.
+- `link` é convertido em URL pública usando `URL_BASE`. Pode ser vazio em eventos que não geram PDF, como o cancelamento de NFC-e.
+- A rota não devolve o PDF em Base64; o usuário baixa o DACCE pelo `link`.
+- Sem correspondências, a resposta é `[]`.
+- Sem filtros, a rota lista todos os eventos; use `limit` para evitar respostas grandes.
+- Filtro não permitido ou `limit` inválido retorna HTTP `422`. Falha de banco retorna HTTP `500`.
 
 ### Tabelas inferidas dos Models
 
@@ -1146,15 +1214,18 @@ app/storage/certificados/certificado_<uniqid>.pfx
 app/storage/logos/logo_<32 caracteres aleatórios>.<png|jpg|webp>
 app/storage/fiscal/xml/xml_<chave>.xml
 app/storage/fiscal/pdf/pdf_<chave>.pdf
+app/storage/fiscal/pdf/pdf_cce_<chave>_seq<sequência>.pdf
 app/storage/fiscal/xml/preview/xml_<chave>.xml
 app/storage/fiscal/pdf/preview/pdf_<chave+uniqid>.pdf
 ```
+
+O XML protocolado da CC-e fica em `emissoes_eventos.xml`, e não na pasta `app/storage/fiscal/xml`.
 
 ## 11. Mapeamento de Controllers e Models
 
 | Arquivo | Responsabilidade real |
 |---|---|
-| `Routers/Routers.php` | declara as 35 rotas, lê JSON e instancia controllers |
+| `Routers/Routers.php` | declara as 36 rotas, lê JSON e instancia controllers |
 | `CompanyController` | lista, cria e atualiza empresa; orquestra certificado |
 | `FiscalController` | escolhe o controller NF-e pelo CRT e delega emissão/eventos |
 | `Fiscal/BaseFiscalController` | pipeline comum completo de NF-e, SEFAZ, DANFE e persistência |
@@ -1165,6 +1236,7 @@ app/storage/fiscal/pdf/preview/pdf_<chave+uniqid>.pdf
 | `CupomFiscalController` | pipeline próprio de NFC-e e cancelamento |
 | `Fiscal/NotaServicoController` | DPS/NFS-e Nacional |
 | `EmissoesController` | consulta emissões e valida PFX base64 |
+| `EmissoesEventosController` | consulta cancelamentos/CC-e e apresenta o link público do PDF |
 | `EstadosController` | lista/retorna estado; helper interno `findOnly` |
 | `MunicipiosController` | lista, procura por UF/nome e resolve estado |
 | oito controllers de catálogo | adaptadores finos para `Model::find` |

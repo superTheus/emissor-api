@@ -52,6 +52,7 @@ class CompanyModel extends Connection
   private $situacao_tributaria;
   private $crt;
   private $table = 'empresa';
+  private ?bool $logoColumnAvailable = null;
 
   function __construct($id = null)
   {
@@ -195,18 +196,25 @@ class CompanyModel extends Connection
       }
     }
 
+    $logoColumnAvailable = $this->hasLogoColumn();
+    if (!$logoColumnAvailable && array_key_exists('logo', $data) && $data['logo'] !== null) {
+      throw new \InvalidArgumentException('O armazenamento de logo ainda não está disponível neste banco de dados.');
+    }
+
     $data = array_merge($this->companyDefaults(), $data);
+    $logoColumn = $logoColumnAvailable ? ', logo' : '';
+    $logoPlaceholder = $logoColumnAvailable ? ', :logo' : '';
 
     $sql = "INSERT INTO {$this->table} (
       tpamb, cnpj, razao_social, nome_fantasia, telefone, email, cep, logradouro, numero,
-      bairro, cidade, uf, cnae, inscricao_municipal, atividade, logo, certificado, senha, csc, csc_id, serie_nfce, numero_nfce,
+      bairro, cidade, uf, cnae, inscricao_municipal, atividade{$logoColumn}, certificado, senha, csc, csc_id, serie_nfce, numero_nfce,
       serie_nfe, numero_nfe, codigo_municipio, codigo_uf, situacao_tributaria, inscricao_estadual,
       csc_homologacao, csc_id_homologacao, serie_nfce_homologacao, numero_nfce_homologacao, serie_nfe_homologacao,
       numero_nfe_homologacao, crt, serie_nfse, numero_nfse, serie_nfse_homologacao, numero_nfse_homologacao
     )
     VALUES (
       :tpamb, :cnpj, :razao_social, :nome_fantasia, :telefone, :email, :cep, :logradouro, :numero,
-      :bairro, :cidade, :uf, :cnae, :inscricao_municipal, :atividade, :logo, :certificado, :senha, :csc, :csc_id, :serie_nfce, :numero_nfce,
+      :bairro, :cidade, :uf, :cnae, :inscricao_municipal, :atividade{$logoPlaceholder}, :certificado, :senha, :csc, :csc_id, :serie_nfce, :numero_nfce,
       :serie_nfe, :numero_nfe, :codigo_municipio, :codigo_uf, :situacao_tributaria, :inscricao_estadual,
       :csc_homologacao, :csc_id_homologacao, :serie_nfce_homologacao, :numero_nfce_homologacao, :serie_nfe_homologacao,
       :numero_nfe_homologacao, :crt, :serie_nfse, :numero_nfse, :serie_nfse_homologacao, :numero_nfse_homologacao
@@ -231,7 +239,9 @@ class CompanyModel extends Connection
       $stmt->bindParam(':cnae', $data['cnae']);
       $stmt->bindParam(':inscricao_municipal', $data['inscricao_municipal']);
       $stmt->bindParam(':atividade', $data['atividade']);
-      $stmt->bindParam(':logo', $data['logo']);
+      if ($logoColumnAvailable) {
+        $stmt->bindParam(':logo', $data['logo']);
+      }
       $stmt->bindParam(':certificado', $data['certificado']);
       $stmt->bindParam(':senha', $data['senha']);
       $stmt->bindParam(':csc', $data['csc']);
@@ -268,6 +278,12 @@ class CompanyModel extends Connection
 
   public function update($data)
   {
+    $logoColumnAvailable = $this->hasLogoColumn();
+    if (!$logoColumnAvailable && array_key_exists('logo', $data)) {
+      throw new \InvalidArgumentException('O armazenamento de logo ainda não está disponível neste banco de dados.');
+    }
+    $logoAssignment = $logoColumnAvailable ? "logo = :logo,\n              " : '';
+
     $sql = "UPDATE {$this->table} SET
               tpamb = :tpamb,
               razao_social = :razao_social,
@@ -284,8 +300,7 @@ class CompanyModel extends Connection
               inscricao_estadual = :inscricao_estadual,
               inscricao_municipal = :inscricao_municipal,
               atividade = :atividade,
-              logo = :logo,
-              certificado = :certificado,
+              {$logoAssignment}certificado = :certificado,
               senha = :senha,
               csc = :csc,
               csc_id = :csc_id,
@@ -339,7 +354,9 @@ class CompanyModel extends Connection
       $stmt->bindParam(':inscricao_estadual', $this->inscricao_estadual);
       $stmt->bindParam(':inscricao_municipal', $this->inscricao_municipal);
       $stmt->bindParam(':atividade', $this->atividade);
-      $stmt->bindParam(':logo', $this->logo);
+      if ($logoColumnAvailable) {
+        $stmt->bindParam(':logo', $this->logo);
+      }
       $stmt->bindParam(':certificado', $this->certificado);
       $stmt->bindParam(':senha', $this->senha);
       $stmt->bindParam(':csc', $this->csc);
@@ -368,8 +385,21 @@ class CompanyModel extends Connection
       $this->getById();
       return $this->getCurrentCompany();
     } catch (\PDOException $e) {
+      error_log('[CompanyModel::update] ' . $e->getMessage());
       throw new \RuntimeException('Erro ao atualizar a empresa.', 0, $e);
     }
+  }
+
+  private function hasLogoColumn(): bool
+  {
+    if ($this->logoColumnAvailable !== null) {
+      return $this->logoColumnAvailable;
+    }
+
+    $stmt = $this->conn->query("SHOW COLUMNS FROM {$this->table} LIKE 'logo'");
+    $this->logoColumnAvailable = $stmt->fetch(\PDO::FETCH_ASSOC) !== false;
+
+    return $this->logoColumnAvailable;
   }
 
   public function delete()

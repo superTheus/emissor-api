@@ -73,6 +73,11 @@ class EmissoesEventosModel extends Connection
     return ['id', 'chave', 'tipo', 'protocolo'];
   }
 
+  protected function defaultOrderBy(): ?array
+  {
+    return ['id', 'DESC'];
+  }
+
   public function create()
   {
     $sql = "INSERT INTO {$this->table} (chave, protocolo, xml, tipo, link)

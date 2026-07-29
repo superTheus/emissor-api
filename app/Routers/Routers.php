@@ -7,6 +7,7 @@ use App\Controllers\CfopController;
 use App\Controllers\CompanyController;
 use App\Controllers\CupomFiscalController;
 use App\Controllers\EmissoesController;
+use App\Controllers\EmissoesEventosController;
 use App\Controllers\EstadosController;
 use App\Controllers\Fiscal\NotaServicoController;
 use App\Controllers\FiscalController;
@@ -105,6 +106,10 @@ final class Routers
 
       $router->post('/emissoes', static function (): void {
         (new EmissoesController())->find(self::requestData());
+      });
+
+      $router->post('/eventos', static function (): void {
+        (new EmissoesEventosController())->find(self::requestData());
       });
 
       $router->mount('/certicate', static function () use ($router): void {

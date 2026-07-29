@@ -262,6 +262,19 @@ abstract class BaseFiscalController
       $errors[] = 'modalidade_frete: use 0, 1, 2, 3, 4 ou 9.';
     }
 
+    if (isset($data['notas_referenciadas'])) {
+      if (!is_array($data['notas_referenciadas'])) {
+        $errors[] = 'notas_referenciadas: deve ser uma lista de chaves de NF-e.';
+      } else {
+        foreach ($data['notas_referenciadas'] as $index => $chaveReferenciada) {
+          $chaveReferenciada = UtilsController::soNumero((string) $chaveReferenciada);
+          if (!preg_match('/^\d{44}$/', $chaveReferenciada)) {
+            $errors[] = "notas_referenciadas[{$index}]: informe uma chave de NF-e com 44 dígitos.";
+          }
+        }
+      }
+    }
+
     $cliente = $data['cliente'] ?? null;
     if (!is_array($cliente)) {
       if (array_key_exists('cliente', $data)) {
@@ -549,8 +562,15 @@ abstract class BaseFiscalController
         $this->nfe->taginfAdic($this->generateIcmsInfo($this->data));
       }
 
+      $referencias = $this->data['notas_referenciadas'] ?? [];
+      if (!is_array($referencias)) {
+        $referencias = [];
+      }
       if (isset($this->data['nota_referencia']) && !empty($this->data['nota_referencia'])) {
-        $this->nfe->tagrefNFe($this->generateReferencia($this->data['nota_referencia']));
+        array_unshift($referencias, $this->data['nota_referencia']);
+      }
+      foreach (array_values(array_unique(array_filter($referencias))) as $referencia) {
+        $this->nfe->tagrefNFe($this->generateReferencia($referencia));
       }
 
       $this->nfe->taginfRespTec($this->generateResponsavelTecnico());

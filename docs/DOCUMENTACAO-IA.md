@@ -5,6 +5,7 @@ document_kind: repository-context
 audience: AI coding agents, reviewers, maintainers
 language: pt-BR
 snapshot_date: 2026-07-15
+events_query_update: 2026-07-28
 base_snapshot_commit: 851af55
 current_code_commit_reviewed: 6997428
 analysis_type: static, complete for app/Controllers + app/Models + app/Routers
@@ -75,6 +76,7 @@ index.php
     ├── CupomFiscalController ───── NFePHP/SEFAZ + Models centrais
     ├── NotaServicoController ───── api-nfse/NFS-e Nacional + Models centrais
     ├── EmissoesController ──────── EmissoesModel / certificado
+    ├── EmissoesEventosController ─ EmissoesEventosModel
     ├── Estados/MunicipiosController
     └── controllers de catálogo ─── models de catálogo
 ```
@@ -91,7 +93,7 @@ company_not_found: HTTP 404 + exit
 missing_request_or_cnpj: HTTP 400 + exit
 ```
 
-## 3. Registro completo das 35 rotas
+## 3. Registro completo das 36 rotas
 
 | # | Método | Path | Target | Entrada | Sucesso |
 |---:|---|---|---|---|---|
@@ -112,24 +114,25 @@ missing_request_or_cnpj: HTTP 400 + exit
 | 15 | POST | `/fiscal/nfce/cancel` | `CupomFiscalController::cancelNfce` | `CancelRequest` | `NFCeCancelResponse` com protocolo/XML |
 | 16 | GET | `/fiscal/nfse/` | closure | nenhuma | `Emitir NFS-e` texto |
 | 17 | POST | `/fiscal/nfse/` | `NotaServicoController::emitir` | `NFSeRequest` | `NFSeResponse` |
-| 18 | POST | `/fiscal/emissoes` | `EmissoesController::find({filter: body})` | filtro cru | emissões[] |
-| 19 | GET | `/fiscal/certicate/` | closure | nenhuma | `Certificado` texto |
-| 20 | POST | `/fiscal/certicate/test` | `EmissoesController::verifyCertificate` | `CertificateTest` | empresa/cnpj/validade; não persiste |
-| 21 | GET | `/fiscal/certicate/test/{cnpj}` | `UtilsController::testCertificate` | path CNPJ | metadados do PFX salvo |
-| 22 | POST | `/cest/` | `CestController::find` | `SearchEnvelope` | rows[] |
-| 23 | POST | `/cfop/` | `CfopController::find` | `SearchEnvelope` | rows[] |
-| 24 | POST | `/formas/` | `FormaPagamentoController::find` | `SearchEnvelope` | rows[] |
-| 25 | POST | `/ibpt/` | `IbptController::find` | `SearchEnvelope` | rows[] |
-| 26 | POST | `/ncm/` | `NcmController::find` | `SearchEnvelope` | rows[] |
-| 27 | POST | `/origem/` | `OrigemController::find` | `SearchEnvelope` | rows[] |
-| 28 | POST | `/situacao/` | `SituacaoTributariaController::find` | `SearchEnvelope` | rows[] |
-| 29 | POST | `/unidades/` | `UnidadesController::find` | `SearchEnvelope`; limit ignorado | rows ou 404 |
-| 30 | POST | `/estados/` | `EstadosController::find` | `SearchEnvelope` | objeto se 1, senão array |
-| 31 | POST | `/estados/{uf}` | mesmo | path → filtro | objeto ou `[]` |
-| 32 | GET | `/estados/{uf}` | `EstadosController::findunique` | path | primeiro ou 401 texto |
-| 33 | POST | `/municipios/` | `MunicipiosController::find` | `SearchEnvelope` | rows[] |
-| 34 | GET | `/municipios/{uf}/{cidade}` | estado + `findunique` | path exato | primeiro; erros 404/401 |
-| 35 | POST | `/municipios/{uf}` | `MunicipiosController::findByUf` | path | municípios[] |
+| 18 | POST | `/fiscal/emissoes` | `EmissoesController::find` | `SearchEnvelope` ou filtro direto | emissões[] |
+| 19 | POST | `/fiscal/eventos` | `EmissoesEventosController::find` | `EventSearchEnvelope` ou filtro direto | eventos[] com XML/link público |
+| 20 | GET | `/fiscal/certicate/` | closure | nenhuma | `Certificado` texto |
+| 21 | POST | `/fiscal/certicate/test` | `EmissoesController::verifyCertificate` | `CertificateTest` | empresa/cnpj/validade; não persiste |
+| 22 | GET | `/fiscal/certicate/test/{cnpj}` | `UtilsController::testCertificate` | path CNPJ | metadados do PFX salvo |
+| 23 | POST | `/cest/` | `CestController::find` | `SearchEnvelope` | rows[] |
+| 24 | POST | `/cfop/` | `CfopController::find` | `SearchEnvelope` | rows[] |
+| 25 | POST | `/formas/` | `FormaPagamentoController::find` | `SearchEnvelope` | rows[] |
+| 26 | POST | `/ibpt/` | `IbptController::find` | `SearchEnvelope` | rows[] |
+| 27 | POST | `/ncm/` | `NcmController::find` | `SearchEnvelope` | rows[] |
+| 28 | POST | `/origem/` | `OrigemController::find` | `SearchEnvelope` | rows[] |
+| 29 | POST | `/situacao/` | `SituacaoTributariaController::find` | `SearchEnvelope` | rows[] |
+| 30 | POST | `/unidades/` | `UnidadesController::find` | `SearchEnvelope`; limit ignorado | rows ou 404 |
+| 31 | POST | `/estados/` | `EstadosController::find` | `SearchEnvelope` | objeto se 1, senão array |
+| 32 | POST | `/estados/{uf}` | mesmo | path → filtro | objeto ou `[]` |
+| 33 | GET | `/estados/{uf}` | `EstadosController::findunique` | path | primeiro ou 401 texto |
+| 34 | POST | `/municipios/` | `MunicipiosController::find` | `SearchEnvelope` | rows[] |
+| 35 | GET | `/municipios/{uf}/{cidade}` | estado + `findunique` | path exato | primeiro; erros 404/401 |
+| 36 | POST | `/municipios/{uf}` | `MunicipiosController::findByUf` | path | municípios[] |
 
 Router 404: status 404, body texto `404, Rota não encontrada`.
 
@@ -144,8 +147,8 @@ Router 404: status 404, body texto `404, Rota não encontrada`.
 ```yaml
 operator: equality only
 join: AND
-column_allowlist: absent
-value_binding: PDO em todos, exceto UnidadesModel
+column_allowlist: definida por Model no código vigente
+value_binding: PDO
 empty_filter: SELECT all rows
 ```
 
@@ -404,7 +407,15 @@ CertificateTest:
   senha: string; pode ser vazia para PFX sem senha
 EmissaoFilter:
   common: {empresa: CNPJ, tipo: NFE|NFCE|NFSE, chave: string}
-  code_allows: qualquer nome de coluna SQL
+  allowed: [chave, numero, serie, empresa, tipo, protocolo]
+EventoFilter:
+  endpoint: POST /fiscal/eventos
+  allowed: [id, chave, tipo, protocolo]
+  types: [CANCELAMENTO, CC]
+  response_order: id DESC
+  response_fields: [id, chave, tipo, protocolo, xml, link]
+  link_presentation: UtilsController::publicUrl; vazio quando o evento não possui PDF
+  xml_storage: banco emissoes_eventos.xml; não há arquivo XML separado para CC-e
 ```
 
 ## 5. Algoritmos e efeitos colaterais
@@ -674,6 +685,47 @@ CCe_legal:
 
 Possíveis rejeições, sempre confirmar no MOC/schema e autorizador da UF: `215` schema; `217/580` documento inexistente/não autorizado; `220/501` prazo; `222` protocolo; `573` duplicidade; `574` autor; `577/578/579` data/hora; `594` sequência de CC-e.
 
+#### EventSearchResponse
+
+`POST /fiscal/eventos`
+
+```json
+{
+  "filter": {
+    "chave": "13260712345678000190550010000001231123456780",
+    "tipo": "CC"
+  },
+  "limit": 20
+}
+```
+
+```json
+[
+  {
+    "id": 17,
+    "chave": "13260712345678000190550010000001231123456780",
+    "tipo": "CC",
+    "protocolo": "113260000000003",
+    "xml": "<procEventoNFe>...</procEventoNFe>",
+    "link": "https://api.exemplo.com/app/storage/fiscal/pdf/pdf_cce_13260712345678000190550010000001231123456780_seq1.pdf"
+  }
+]
+```
+
+```yaml
+success_http: 200
+empty_result: []
+exact_match_filters: [id, chave, tipo, protocolo]
+direct_filter_supported: true
+envelope_filter_and_limit_supported: true
+default_order: id DESC
+pdf_base64_returned: false
+xml_returned_inline: true
+errors:
+  422: filtro não permitido, filter não objeto ou limit inválido
+  500: falha interna/banco
+```
+
 ### NFSeResponse
 
 ```json
@@ -872,10 +924,13 @@ types_written: [NFE, NFCE, NFSE]
 
 ```yaml
 fields: [id, chave, tipo, protocolo, xml, link]
+find: filtros exatos allowlisted [id, chave, tipo, protocolo]; ORDER BY id DESC
 create: insert
 update: update por chave
 types_written: [CANCELAMENTO, CC]
-constructor_defect: recebe chave/setChave, mas getById consulta id não definido
+constructor: recebe chave e carrega o evento mais recente dessa chave
+query_route: POST /fiscal/eventos via EmissoesEventosController
+presentation: link relativo convertido por UtilsController::publicUrl
 ```
 
 ### Models de catálogo
@@ -954,7 +1009,6 @@ common:
 | MODEL-002 | média | hydrators | não verificam fetch falso |
 | API-001 | média | geral | texto/JSON/status inconsistentes; missing unique = 401 |
 | API-002 | média | eventos | limites máximos de `xJust`/`xCorrecao`, chave de 44 dígitos e máximo de 20 CC-e não são pré-validados |
-| API-003 | média | emissões | limite inacessível; body inteiro vira filtro |
 | DEP-001 | média | composer | SDKs fiscais em dev-master |
 | API-004 | baixa | rota | typo `certicate` faz parte do contrato |
 
@@ -1098,6 +1152,12 @@ CC-e NF-e (rota atualmente afetada por `NFEventDispatchDefect`):
 {"cnpj":"12345678000190","chave":"CHAVE_DE_44_DIGITOS","carta":"Texto da correção permitido pela legislação aplicável"}
 ```
 
+Consulta posterior das CC-e:
+
+```json
+{"filter":{"chave":"CHAVE_DE_44_DIGITOS","tipo":"CC"},"limit":20}
+```
+
 Cancelamento NFC-e:
 
 ```json
@@ -1199,7 +1259,7 @@ Esta seção torna explícita a cobertura método a método. Getters/setters de 
 | todos os `getCurrent`/`current` | serialização das propriedades do Model |
 | todos os `find` | busca por igualdade; diferenças documentadas na seção 8 |
 | `EmissoesModel::create/update` | persistência de documentos/sequência CC-e |
-| `EmissoesEventosModel::create/update` | persistência de eventos |
+| `EmissoesEventosModel::create/update/find` | persistência e consulta de eventos |
 | `CompanyModel::create/update/delete` | CRUD da empresa |
 
 Fim do contexto canônico para IA.

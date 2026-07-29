@@ -4,6 +4,7 @@ require dirname(__DIR__) . '/vendor/autoload.php';
 
 use App\Controllers\CompanyController;
 use App\Controllers\CupomFiscalController;
+use App\Controllers\EmissoesEventosController;
 use App\Controllers\Fiscal\CRT1Controller;
 use App\Controllers\Fiscal\NotaServicoController;
 use App\Controllers\UtilsController;
@@ -31,6 +32,34 @@ final class TestFilterModel
     protected function filterableColumns(): array
     {
         return ['id', 'name'];
+    }
+}
+
+final class TestOrderedFilterModel
+{
+    use FindsByFilters;
+
+    private PDO $conn;
+    private string $table = 'items';
+
+    public function __construct(PDO $connection)
+    {
+        $this->conn = $connection;
+    }
+
+    public function search($filters = [], $limit = null): array
+    {
+        return $this->findByFilters($filters, $limit);
+    }
+
+    protected function filterableColumns(): array
+    {
+        return ['id', 'name'];
+    }
+
+    protected function defaultOrderBy(): ?array
+    {
+        return ['id', 'DESC'];
     }
 }
 
@@ -117,6 +146,64 @@ $test('filtros SQL usam allowlist e parâmetros', static function () use ($asser
     }
 
     $assertSame(2, (int) $pdo->query('SELECT COUNT(*) FROM items')->fetchColumn());
+});
+
+$test('consulta ordenada aplica limite depois da ordenação', static function () use ($assertSame): void {
+    $pdo = new PDO('sqlite::memory:');
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $pdo->exec('CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT NOT NULL)');
+    $pdo->exec("INSERT INTO items (name) VALUES ('primeiro'), ('ultimo')");
+    $model = new TestOrderedFilterModel($pdo);
+
+    $result = $model->search([], 1);
+
+    $assertSame(2, (int) $result[0]['id']);
+    $assertSame('ultimo', $result[0]['name']);
+});
+
+$test('consulta eventos encaminha filtros e apresenta link público', static function () use ($assertSame): void {
+    $_ENV['URL_BASE'] = 'https://api.example.test/';
+    $receivedFilter = null;
+    $receivedLimit = null;
+    $controller = new EmissoesEventosController(
+        static function ($filter, $limit) use (&$receivedFilter, &$receivedLimit): array {
+            $receivedFilter = $filter;
+            $receivedLimit = $limit;
+
+            return [[
+                'id' => 7,
+                'chave' => '13260712345678000190550010000001231123456780',
+                'tipo' => 'CC',
+                'protocolo' => '113260000000003',
+                'xml' => '<procEventoNFe/>',
+                'link' => 'app/storage/fiscal/pdf/pdf_cce_chave_seq1.pdf',
+            ]];
+        }
+    );
+
+    set_error_handler(static fn(): bool => true, E_WARNING);
+    ob_start();
+    try {
+        $controller->find([
+            'filter' => ['chave' => '13260712345678000190550010000001231123456780', 'tipo' => 'CC'],
+            'limit' => 10,
+        ]);
+        $response = json_decode((string) ob_get_contents(), true, 512, JSON_THROW_ON_ERROR);
+    } finally {
+        ob_end_clean();
+        restore_error_handler();
+    }
+
+    $assertSame(
+        ['chave' => '13260712345678000190550010000001231123456780', 'tipo' => 'CC'],
+        $receivedFilter
+    );
+    $assertSame(10, $receivedLimit);
+    $assertSame(
+        'https://api.example.test/app/storage/fiscal/pdf/pdf_cce_chave_seq1.pdf',
+        $response[0]['link']
+    );
+    $assertSame('<procEventoNFe/>', $response[0]['xml']);
 });
 
 $test('valida CST com dois dígitos', static function () use ($assertTrue, $assertSame): void {
