@@ -401,6 +401,199 @@ $test('validação da NF-e retorna todos os campos inválidos em error_tags', st
     }
 });
 
+$test('retorno de conserto monta ide, referência e pagamento 90 sem troco', static function () use ($assertSame, $assertTrue): void {
+    $controller = new class extends CRT1Controller {
+        public function __construct()
+        {
+        }
+
+        public function configure(array $data, array $payments): void
+        {
+            $this->data = $data;
+            $this->pagamentos = $payments;
+            $this->serie = 1;
+            $this->numero = 123;
+            $this->dataEmissao = '2026-07-31T12:00:00-04:00';
+            $this->modo_emissao = 1;
+            $this->currentChave = '29260701272713000177550010000001231234567890';
+            $this->company = new class {
+                public function getCodigo_uf(): string { return '29'; }
+                public function getCodigo_municipio(): string { return '2903201'; }
+                public function getUf(): string { return 'BA'; }
+            };
+        }
+
+        public function validateContract(array $data): void
+        {
+            $this->validateEmissionData($data);
+        }
+
+        public function ide(array $data): object
+        {
+            return $this->generateIdeData($data);
+        }
+
+        public function references(array $data): array
+        {
+            return $this->referencedNfeKeys($data);
+        }
+
+        public function reference(string $key): object
+        {
+            return $this->generateReferencia($key);
+        }
+
+        public function payment(array $payment): object
+        {
+            return $this->generatePagamentoData($payment);
+        }
+
+        public function paymentGroup(): object
+        {
+            return $this->generateFaturaData();
+        }
+    };
+
+    $key = '29260510962697000720550020000500781262109988';
+    $formattedKey = '2926 0510 9626 9700 0720 5500 2000 0500 7812 6210 9988';
+    $payload = [
+        'cnpj' => '01272713000177',
+        'cfop' => '5916',
+        'operacao' => 'Retorno de mercadoria ou bem recebido para conserto ou reparo',
+        'finalidade' => 1,
+        'indicador_presenca' => 0,
+        'consumidor_final' => 'S',
+        'nota_referencia' => $formattedKey,
+        'notas_referenciadas' => [$key, $formattedKey],
+        'cliente' => [
+            'nome' => 'AMAGGI LOUIS DREYFUS ZEN NOH GRAOS S.A',
+            'tipo_documento' => 'CNPJ',
+            'documento' => '10962697000720',
+            'endereco' => [
+                'logradouro' => 'RODOVIA BA 225 KM 69 COACERAL',
+                'numero' => 'S/N',
+                'bairro' => 'ZONA RURAL',
+                'codigo_municipio' => '2911105',
+                'municipio' => 'Formosa do Rio Preto',
+                'uf' => 'BA',
+                'cep' => '47990000',
+            ],
+        ],
+        'produtos' => [[
+            'codigo' => '98',
+            'ean' => null,
+            'descricao' => 'PA CARREGADEIRA CASE W20E',
+            'ncm' => '84295199',
+            'cfop' => '5916',
+            'unidade' => 'UN',
+            'quantidade' => 1,
+            'valor' => 298000,
+            'total' => 298000,
+            'origem' => 0,
+        ]],
+        'total' => 298000,
+        'total_pago' => 0,
+        'troco' => 0,
+        'pagamentos' => [['codigo' => '90', 'valorpago' => 0]],
+    ];
+
+    $controller->validateContract($payload);
+    $controller->configure($payload, [['indPag' => 2, 'tPag' => '90', 'valorpago' => 0]]);
+
+    $ide = $controller->ide($payload);
+    $references = $controller->references($payload);
+    $payment = $controller->payment(['indPag' => 2, 'tPag' => '90', 'valorpago' => 0]);
+    $paymentGroup = $controller->paymentGroup();
+
+    $assertSame(1, $ide->finNFe);
+    $assertSame(0, $ide->indPres);
+    $assertSame([$key], $references);
+    $assertSame('90', $payment->tPag);
+    $assertSame('0.00', $payment->vPag);
+    $assertSame(false, property_exists($payment, 'indPag'));
+    $assertSame(false, property_exists($paymentGroup, 'vTroco'));
+
+    $make = new \NFePHP\NFe\Make(10);
+    $info = new stdClass();
+    $info->versao = '4.00';
+    $make->taginfNFe($info);
+    $ideNode = $make->tagide($ide);
+    $referenceNode = $make->tagrefNFe($controller->reference($references[0]));
+    $make->tagpag($paymentGroup);
+    $paymentNode = $make->tagdetPag($payment);
+
+    $nodeXml = static fn(\DOMNode $node): string => (string) $node->ownerDocument->saveXML($node);
+    $ideXml = $nodeXml($ideNode);
+    $referenceXml = $nodeXml($referenceNode);
+    $paymentXml = $nodeXml($paymentNode);
+
+    $assertTrue(str_contains($ideXml, '<finNFe>1</finNFe>'), 'Fragmento ide não contém finNFe=1.');
+    $assertTrue(str_contains($ideXml, '<indPres>0</indPres>'), 'Fragmento ide não contém indPres=0.');
+    $assertTrue(
+        str_contains($referenceXml, '<refNFe>' . $key . '</refNFe>'),
+        'Fragmento NFref não contém a chave normalizada.'
+    );
+    $assertTrue(str_contains($paymentXml, '<tPag>90</tPag>'), 'Fragmento detPag não contém tPag=90.');
+    $assertTrue(str_contains($paymentXml, '<vPag>0.00</vPag>'), 'Fragmento detPag não contém vPag=0.00.');
+    $assertSame(false, str_contains($paymentXml, '<indPag>'), 'Fragmento detPag contém indPag indevido.');
+});
+
+$test('retorno de conserto rejeita referência, presença e pagamento 90 inválidos', static function () use ($assertSame, $assertTrue): void {
+    $controller = new class extends CRT1Controller {
+        public function __construct()
+        {
+        }
+
+        public function validateContract(array $data): void
+        {
+            $this->validateEmissionData($data);
+        }
+    };
+
+    $payload = [
+        'cnpj' => '01272713000177',
+        'cfop' => '5916',
+        'finalidade' => 1,
+        'indicador_presenca' => 8,
+        'nota_referencia' => '123',
+        'cliente' => [
+            'nome' => 'CLIENTE TESTE',
+            'tipo_documento' => 'CNPJ',
+            'documento' => '10962697000720',
+            'endereco' => [
+                'logradouro' => 'RUA TESTE', 'numero' => '1', 'bairro' => 'CENTRO',
+                'codigo_municipio' => '2911105', 'municipio' => 'Formosa do Rio Preto',
+                'uf' => 'BA', 'cep' => '47990000',
+            ],
+        ],
+        'produtos' => [[
+            'codigo' => '98', 'ean' => null, 'descricao' => 'PRODUTO TESTE', 'ncm' => '84295199',
+            'cfop' => '5916', 'unidade' => 'UN', 'quantidade' => 1, 'valor' => 100, 'total' => 100, 'origem' => 0,
+        ]],
+        'total' => 100,
+        'total_pago' => 100,
+        'troco' => 10,
+        'pagamentos' => [
+            ['codigo' => '90', 'valorpago' => 10],
+            ['codigo' => '01', 'valorpago' => 90],
+        ],
+    ];
+
+    try {
+        $controller->validateContract($payload);
+        throw new RuntimeException('Contrato fiscal inválido foi aceito.');
+    } catch (HttpException $exception) {
+        $assertSame(422, $exception->status());
+        $tags = $exception->context()['error_tags'] ?? [];
+        $joined = implode(' ', $tags);
+        $assertTrue(str_contains($joined, 'indicador_presenca'));
+        $assertTrue(str_contains($joined, 'nota_referencia'));
+        $assertTrue(str_contains($joined, 'deve ser informada sozinha'));
+        $assertTrue(str_contains($joined, 'valor pago igual a zero'));
+        $assertTrue(str_contains($joined, 'troco'));
+    }
+});
+
 $test('validação fiscal explica CFOP interestadual e CSOSN incompatível', static function () use ($assertSame, $assertTrue): void {
     $controller = (new ReflectionClass(CRT1Controller::class))->newInstanceWithoutConstructor();
     $company = new class {

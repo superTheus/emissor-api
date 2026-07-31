@@ -75,6 +75,8 @@ abstract class BaseFiscalController
   protected $receiptPollAttempts = 0;
   protected $receiptNumber;
   protected const MAX_RECEIPT_POLLS = 5;
+  protected const VALID_NFE_PURPOSES = [1, 2, 3, 4];
+  protected const VALID_PRESENCE_INDICATORS = [0, 1, 2, 3, 4, 5, 9];
 
   public function __construct($data = null)
   {
@@ -128,7 +130,26 @@ abstract class BaseFiscalController
     $this->numero = $isProduction ? $this->company->getNumero_nfe() : $this->company->getNumero_nfe_homologacao();
     $this->csc = $isProduction ? $this->company->getCsc() : $this->company->getCsc_homologacao();
     $this->csc_id = $isProduction ? $this->company->getCsc_id() : $this->company->getCsc_id_homologacao();
-    $this->certificado = UtilsController::getCertificado($this->company->getCertificado());
+    if (isset($this->data['produtos'])) {
+      $this->validateIssuerConfiguration();
+    }
+
+    try {
+      $this->certificado = UtilsController::getCertificado($this->company->getCertificado());
+      $certificateData = $this->company->getCertificate();
+      $validFrom = (int) ($certificateData['validFrom_time_t'] ?? 0);
+      $validTo = (int) ($certificateData['validTo_time_t'] ?? 0);
+      $now = time();
+      if ($validFrom === 0 || $validTo === 0 || $now < $validFrom || $now > $validTo) {
+        throw new \RuntimeException('Certificado expirado ou ainda não válido.');
+      }
+    } catch (\Throwable $exception) {
+      throw new HttpException(
+        'Certificado do emitente não está utilizável.',
+        422,
+        ['error_tags' => [$exception->getMessage()], 'etapa' => 'configuração do emitente']
+      );
+    }
     $this->config = $this->setConfig();
 
     // Para emissão, dataEmissao é relevante; para cancelamento/CCe, não atrapalha.
@@ -137,10 +158,18 @@ abstract class BaseFiscalController
       $this->dataEmissao = (new \DateTime('now'))->format('Y-m-d\TH:i:sP');
     }
 
-    $this->tools = new Tools(
-      json_encode($this->config),
-      UtilsController::readPfxForNFePHP($this->certificado, $this->company->getSenha())
-    );
+    try {
+      $this->tools = new Tools(
+        json_encode($this->config),
+        UtilsController::readPfxForNFePHP($this->certificado, $this->company->getSenha())
+      );
+    } catch (\Throwable $exception) {
+      throw new HttpException(
+        'Certificado do emitente não está utilizável.',
+        422,
+        ['error_tags' => ['Verifique o arquivo e a senha do certificado.'], 'etapa' => 'configuração do emitente']
+      );
+    }
     $this->tools->model($this->mod);
 
     return true;
@@ -235,6 +264,63 @@ abstract class BaseFiscalController
     $this->montaChave();
   }
 
+  protected function validateIssuerConfiguration(): void
+  {
+    $errors = [];
+    if (!is_numeric($this->serie) || (int) $this->serie < 0) {
+      $errors[] = 'Série da NF-e não configurada para o ambiente do emitente.';
+    }
+    if (!is_numeric($this->numero) || (int) $this->numero <= 0) {
+      $errors[] = 'Próximo número da NF-e não configurado para o ambiente do emitente.';
+    }
+    if (!preg_match('/^\d{7}$/', (string) $this->company->getCodigo_municipio())) {
+      $errors[] = 'Código IBGE do município do emitente não configurado.';
+    }
+    if (!preg_match('/^\d{2}$/', (string) $this->company->getCodigo_uf())) {
+      $errors[] = 'Código IBGE da UF do emitente não configurado.';
+    }
+    if (trim((string) $this->company->getCertificado()) === '') {
+      $errors[] = 'Certificado do emitente não configurado.';
+    }
+
+    if ($errors !== []) {
+      throw new HttpException(
+        'Configuração fiscal do emitente incompleta.',
+        422,
+        ['error_tags' => $errors, 'etapa' => 'configuração do emitente']
+      );
+    }
+  }
+
+  protected function normalizeNfeKey(string $key): string
+  {
+    return UtilsController::soNumero($key);
+  }
+
+  protected function referencedNfeKeys(array $data): array
+  {
+    $references = [];
+    if (isset($data['nota_referencia']) && is_scalar($data['nota_referencia'])) {
+      $references[] = $data['nota_referencia'];
+    }
+    if (isset($data['notas_referenciadas']) && is_array($data['notas_referenciadas'])) {
+      $references = array_merge($references, $data['notas_referenciadas']);
+    }
+
+    $normalized = [];
+    foreach ($references as $reference) {
+      if (!is_scalar($reference)) {
+        continue;
+      }
+      $key = $this->normalizeNfeKey((string) $reference);
+      if (preg_match('/^\d{44}$/', $key)) {
+        $normalized[$key] = $key;
+      }
+    }
+
+    return array_values($normalized);
+  }
+
   protected function validateEmissionData(array $data): void
   {
     $errors = [];
@@ -258,21 +344,42 @@ abstract class BaseFiscalController
       $errors[] = 'modoEmissao: valor inválido para NF-e modelo 55. Use 1, 2, 4, 5, 6 ou 7.';
     }
 
+    if (isset($data['finalidade']) && (!is_numeric($data['finalidade']) || !in_array((int) $data['finalidade'], self::VALID_NFE_PURPOSES, true))) {
+      $errors[] = 'finalidade: use 1, 2, 3 ou 4.';
+    }
+
+    if (isset($data['indicador_presenca']) && (!is_numeric($data['indicador_presenca']) || !in_array((int) $data['indicador_presenca'], self::VALID_PRESENCE_INDICATORS, true))) {
+      $errors[] = 'indicador_presenca: use 0, 1, 2, 3, 4, 5 ou 9.';
+    }
+
     if (isset($data['modalidade_frete']) && !in_array((int) $data['modalidade_frete'], [0, 1, 2, 3, 4, 9], true)) {
       $errors[] = 'modalidade_frete: use 0, 1, 2, 3, 4 ou 9.';
     }
 
+    $referencesToValidate = [];
+    if (array_key_exists('nota_referencia', $data)) {
+      if (!is_scalar($data['nota_referencia'])) {
+        $errors[] = 'nota_referencia: deve ser uma chave de NF-e.';
+      } elseif (trim((string) $data['nota_referencia']) !== '') {
+        $referencesToValidate['nota_referencia'] = $data['nota_referencia'];
+      }
+    }
     if (isset($data['notas_referenciadas'])) {
       if (!is_array($data['notas_referenciadas'])) {
         $errors[] = 'notas_referenciadas: deve ser uma lista de chaves de NF-e.';
       } else {
         foreach ($data['notas_referenciadas'] as $index => $chaveReferenciada) {
-          $chaveReferenciada = UtilsController::soNumero((string) $chaveReferenciada);
-          if (!preg_match('/^\d{44}$/', $chaveReferenciada)) {
-            $errors[] = "notas_referenciadas[{$index}]: informe uma chave de NF-e com 44 dígitos.";
-          }
+          $referencesToValidate["notas_referenciadas[{$index}]"] = $chaveReferenciada;
         }
       }
+    }
+    foreach ($referencesToValidate as $path => $reference) {
+      if (!is_scalar($reference) || !preg_match('/^\d{44}$/', $this->normalizeNfeKey((string) $reference))) {
+        $errors[] = "{$path}: informe uma chave de NF-e com 44 dígitos.";
+      }
+    }
+    if (in_array((string) ($data['cfop'] ?? ''), ['5916', '6916'], true) && $this->referencedNfeKeys($data) === []) {
+      $errors[] = 'nota_referencia: o retorno de conserto exige ao menos uma chave de NF-e com 44 dígitos.';
     }
 
     $cliente = $data['cliente'] ?? null;
@@ -380,6 +487,7 @@ abstract class BaseFiscalController
 
     $paymentsTotal = 0.0;
     $payments = $data['pagamentos'] ?? null;
+    $noPaymentIndexes = [];
     if (!is_array($payments)) {
       if (array_key_exists('pagamentos', $data)) {
         $errors[] = 'pagamentos: deve ser uma lista.';
@@ -393,6 +501,18 @@ abstract class BaseFiscalController
         }
         if (!isset($payment['codigo'])) {
           $errors[] = "{$path}.codigo: campo obrigatório.";
+        } elseif (!is_scalar($payment['codigo'])) {
+          $errors[] = "{$path}.codigo: informe um código SEFAZ com 2 dígitos.";
+        } else {
+          $paymentDigits = UtilsController::soNumero((string) $payment['codigo']);
+          if (!preg_match('/^\d{1,2}$/', $paymentDigits)) {
+            $errors[] = "{$path}.codigo: informe um código SEFAZ com 2 dígitos.";
+          } else {
+            $paymentCode = str_pad($paymentDigits, 2, '0', STR_PAD_LEFT);
+            if ($paymentCode === '90') {
+              $noPaymentIndexes[] = $index;
+            }
+          }
         }
         if (!isset($payment['valorpago'])) {
           $errors[] = "{$path}.valorpago: campo obrigatório.";
@@ -401,6 +521,19 @@ abstract class BaseFiscalController
         } else {
           $paymentsTotal += (float) $payment['valorpago'];
         }
+      }
+    }
+
+    if ($noPaymentIndexes !== []) {
+      if (count($payments) !== 1 || count($noPaymentIndexes) !== 1) {
+        $errors[] = 'pagamentos: a forma 90 - Sem pagamento deve ser informada sozinha.';
+      }
+      $noPayment = $payments[$noPaymentIndexes[0]] ?? [];
+      if (abs((float) ($noPayment['valorpago'] ?? 0)) > 0.009) {
+        $errors[] = 'pagamentos: a forma 90 - Sem pagamento exige valor pago igual a zero.';
+      }
+      if (abs((float) ($data['troco'] ?? 0)) > 0.009) {
+        $errors[] = 'troco: não deve ser informado para a forma 90 - Sem pagamento.';
       }
     }
 
@@ -562,14 +695,7 @@ abstract class BaseFiscalController
         $this->nfe->taginfAdic($this->generateIcmsInfo($this->data));
       }
 
-      $referencias = $this->data['notas_referenciadas'] ?? [];
-      if (!is_array($referencias)) {
-        $referencias = [];
-      }
-      if (isset($this->data['nota_referencia']) && !empty($this->data['nota_referencia'])) {
-        array_unshift($referencias, $this->data['nota_referencia']);
-      }
-      foreach (array_values(array_unique(array_filter($referencias))) as $referencia) {
+      foreach ($this->referencedNfeKeys($this->data) as $referencia) {
         $this->nfe->tagrefNFe($this->generateReferencia($referencia));
       }
 
@@ -957,14 +1083,14 @@ abstract class BaseFiscalController
     $std->tpEmis = $this->modo_emissao;
     $std->cDV = mb_substr($this->currentChave, -1);
     $std->tpAmb = $this->ambiente;
-    $std->finNFe = isset($data['finalidade']) ? $data['finalidade'] : 1;
+    $std->finNFe = (int) ($data['finalidade'] ?? 1);
     $std->indFinal = isset($data['consumidor_final']) && $data['consumidor_final'] === 'S' ? 1 : 0;
 
     if ($this->tipoCliente === 'PF') {
       $std->indFinal = 1;
     }
 
-    $std->indPres = 1;
+    $std->indPres = (int) ($data['indicador_presenca'] ?? 1);
     $std->procEmi = 0;
     $std->verProc = 1;
     $std->dhCont = null;
@@ -1049,7 +1175,7 @@ abstract class BaseFiscalController
   protected function generateReferencia($chave)
   {
     $std = new stdClass();
-    $std->refNFe = str_replace(' ', '', $chave);
+    $std->refNFe = $this->normalizeNfeKey((string) $chave);
     return $std;
   }
 
@@ -1342,7 +1468,9 @@ abstract class BaseFiscalController
   protected function generateFaturaData()
   {
     $std = new stdClass();
-    $std->vTroco = isset($this->data['troco']) ? $this->data['troco'] : 0;
+    if (!$this->isNoPayment() && (float) ($this->data['troco'] ?? 0) > 0) {
+      $std->vTroco = number_format((float) $this->data['troco'], 2, '.', '');
+    }
 
     return $std;
   }
@@ -1350,12 +1478,15 @@ abstract class BaseFiscalController
   protected function generatePagamentoData($pagamento)
   {
     $std = new stdClass();
-    if (isset($this->data['finalidade']) && $this->data['finalidade'] == 4) {
-      $std->tPag = 90;
-      $std->vPag = 0;
+    $paymentCode = str_pad((string) ($pagamento['tPag'] ?? ''), 2, '0', STR_PAD_LEFT);
+    if ($paymentCode === '90' || (int) ($this->data['finalidade'] ?? 1) === 4) {
+      $std->tPag = '90';
+      $std->vPag = '0.00';
     } else {
-      $std->indPag = isset($pagamento['indPag']) ? $pagamento['indPag'] : 0;
-      $std->tPag = str_pad($pagamento['tPag'], 2, '0', STR_PAD_LEFT);
+      if (isset($pagamento['indPag']) && in_array((int) $pagamento['indPag'], [0, 1], true)) {
+        $std->indPag = (int) $pagamento['indPag'];
+      }
+      $std->tPag = $paymentCode;
       $std->vPag = number_format($pagamento['valorpago'], 2, ".", "");
 
       if (in_array($std->tPag, ['03', '04', '17', '3', '4', '17', 3, 4, 17])) {
@@ -1367,6 +1498,12 @@ abstract class BaseFiscalController
     }
 
     return $std;
+  }
+
+  protected function isNoPayment(): bool
+  {
+    return count($this->pagamentos) === 1
+      && str_pad((string) ($this->pagamentos[0]['tPag'] ?? ''), 2, '0', STR_PAD_LEFT) === '90';
   }
 
   protected function generateResponsavelTecnico()
