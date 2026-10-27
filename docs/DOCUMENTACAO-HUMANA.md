@@ -1293,3 +1293,12 @@ Prioridade média:
 Foram lidos integralmente todos os arquivos de `app/Controllers`, `app/Models` e `app/Routers`, além de `index.php`, configuração Composer e documentação NFS-e preexistente. A sintaxe de todos os PHPs foi validada com `php -l`.
 
 Não foi feita emissão real nem chamada à SEFAZ/NFS-e, para não gerar efeitos fiscais. O banco configurado não pôde ser resolvido a partir deste ambiente; por isso tipos, índices e constraints SQL não foram inventados e estão explicitamente marcados como inferidos.
+
+
+## Autenticação obrigatória
+
+Configure `API_TOKEN` no emissor e o mesmo valor no backend principal (somente no
+servidor). Não coloque esse segredo no frontend. Sem configuração, o emissor
+responde 503 e recusa a operação; com token ausente/incorreto, responde 401.
+Configure o segredo antes de publicar esta versão. Valide com
+`php tests/api-token.php`, que usa apenas tokens de teste e não emite documentos.

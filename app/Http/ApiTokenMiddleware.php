@@ -16,8 +16,9 @@ final class ApiTokenMiddleware
     }
 
     $configuredToken = (string) ($_ENV['API_TOKEN'] ?? getenv('API_TOKEN') ?: '');
-    if ($configuredToken === '') {
-      return;
+    if (trim($configuredToken) === '') {
+      JsonResponse::error('Serviço indisponível: autenticação não configurada.', 503);
+      exit;
     }
 
     $authorization = (string) ($_SERVER['HTTP_AUTHORIZATION'] ?? '');

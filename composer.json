@@ -9,7 +9,7 @@
     },
     "scripts": {
         "lint": "php scripts/lint.php",
-        "test": "php tests/run.php",
+        "test": ["php tests/run.php", "php tests/api-token.php"],
         "check": [
             "@lint",
             "@test"
